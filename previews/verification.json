@@ -1,0 +1,129 @@
+{
+  "room": "S13-30612",
+  "opengl": "4.6.0 - Build 30.0.101.1273",
+  "renderer": "Intel(R) UHD Graphics",
+  "boxes": 2269,
+  "student_tables": 36,
+  "student_seats": 72,
+  "seating_columns": 3,
+  "seats_per_pair": 4,
+  "air_conditioners": [
+    {
+      "side": "right",
+      "position": [
+        0.07,
+        3.2499999999999996,
+        3.12
+      ]
+    },
+    {
+      "side": "right",
+      "position": [
+        0.07,
+        8.25,
+        3.12
+      ]
+    },
+    {
+      "side": "left",
+      "position": [
+        10.94,
+        3.2499999999999996,
+        3.12
+      ]
+    },
+    {
+      "side": "left",
+      "position": [
+        10.94,
+        8.25,
+        3.12
+      ]
+    }
+  ],
+  "front_tv_count": 1,
+  "front_tv_dimensions_m": [
+    2.5,
+    0.16,
+    1.44
+  ],
+  "front_tv_floor_stand": true,
+  "speakers": 0,
+  "outer_tables_wall_clearance_m": 0.06,
+  "instructor_desk_m": [
+    8.529999999999998,
+    1.6500000000000004,
+    3.2,
+    0.75,
+    0.75
+  ],
+  "computer_type": "iMac all-in-one; no separate computer case",
+  "monitor_face_normal": [
+    0,
+    -1,
+    0
+  ],
+  "instructor_chair_position_m": [
+    10.129999999999997,
+    1.2100000000000004
+  ],
+  "keyboard_position_m": [
+    9.829999999999997,
+    1.7500000000000004,
+    0.758
+  ],
+  "mouse_position_m": [
+    10.529999999999998,
+    1.7800000000000002,
+    0.758
+  ],
+  "overhead_tvs": [
+    {
+      "x": 2.55,
+      "y": 6.29,
+      "z": 2.45,
+      "width": 1.3,
+      "height": 0.74,
+      "beam_y": 5.85
+    },
+    {
+      "x": 7.9399999999999995,
+      "y": 6.29,
+      "z": 2.45,
+      "width": 1.3,
+      "height": 0.74,
+      "beam_y": 5.85
+    }
+  ],
+  "lighting_presets": [
+    "daylight",
+    "sunset"
+  ],
+  "god_rays_enabled": true,
+  "interior_light_pools_enabled": true,
+  "fpv_walk_mode": true,
+  "lighting_sliders_enabled": true,
+  "lighting_slider_channels": [
+    "sunlight",
+    "interior",
+    "god_rays",
+    "ambient"
+  ],
+  "views": [
+    "overview.png",
+    "inside.png",
+    "exterior.png",
+    "top.png"
+  ],
+  "door_open_rendered": true,
+  "tour_phases_rendered": 8,
+  "opengl_errors": 0,
+  "glfw_errors": [],
+  "entry_hall_position": "rear right when facing the screen; X=0 side, +Y extension",
+  "door_position_m": [
+    0.6,
+    16.11
+  ],
+  "main_floor_area_m2": 142.659,
+  "provisional_total_floor_area_m2": 154.288
+}

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "checks": [
+    "right door jamb flush with return wall; all fixed framing stays within doorway width and height",
+    "entry hall and door at rear RIGHT, on X=0 side while facing screen",
+    "one front TV on right; two air conditioners per side",
+    "large front TV on a floor stand; front speakers removed",
+    "three seating blocks with two flush tables and four seats per pair",
+    "outer table blocks against walls, with no column intersections",
+    "circled center column removed from rear wall",
+    "V13: control group near middle column at new red mark, raised 0.40 m, one remote; widened entry retained",
+    "circled side bay has an actual glazed opening, with no solid wall behind it",
+    "teacher desk touches first student pair edge-to-edge, level and aligned at window end",
+    "long computer desk at front-left; no wooden podium",
+    "iMac faces wall; instructor seated behind desk; keyboard/mouse accessible; no separate case",
+    "only two mid-room TVs; deep beam and mounting hardware reach their cabinets",
+    "student chairs use black padded meshes and chrome trapezoid frames with floor runners",
+    "standalone rear entrance table removed",
+    "1-4 key callbacks and all preset renders",
+    "drag rotation and scroll zoom",
+    "ceiling, cutaway and walk/orbit toggles",
+    "walk-camera movement",
+    "animated doors reach open and closed limits",
+    "tour switch and manual preset stops tour",
+    "HUD visibility and final OpenGL error check"
+  ]
+}

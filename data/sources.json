@@ -1,0 +1,162 @@
+[
+  {
+    "file": "assignment_overview.png",
+    "description": "ภาพหัวข้องาน",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "assignment_requirements.png",
+    "description": "ภาพข้อกำหนด OpenGL",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "floor6_plan.pdf",
+    "description": "แปลนต้นฉบับอ้างอิงตำแหน่งห้องและตารางข้อมูล ตำแหน่งโถงใช้คำยืนยันของผู้ใช้",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "layout_correction.png",
+    "description": "ผู้ใช้แก้ตำแหน่ง: ย้ายโถงและประตูไปด้านหลังห้องตามเส้นสีน้ำเงิน",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "furniture_correction.png",
+    "description": "ตำแหน่งโต๊ะคอมหน้าห้องที่ผู้ใช้ชี้ พร้อมคำแก้ไขทีวี แอร์และโต๊ะเรียนใน room_config.json",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "reference_imac_and_chair.png",
+    "description": "ภาพ iMac และเก้าอี้ผู้สอน ผู้ใช้ยืนยันว่าเป็น iMac ไม่มีเคสแยก",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "measurement_01.jpg",
+    "description": "เห็น 0.60, 2.75 และบางส่วนของค่า 12.10 เมตร",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "measurement_02.jpg",
+    "description": "เห็น 2.75, 12.10 และบางส่วนของค่า 3.98 เมตร",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "measurement_03.jpg",
+    "description": "เห็น 12.15, 3.98 และบางส่วนของค่า 11.79 เมตร",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "measurement_04.jpg",
+    "description": "เห็น 4.01, 11.79, 3.46 เมตร",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "measurement_05.jpg",
+    "description": "เห็น 11.79 และ 3.46 เมตร",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "measurement_06.jpg",
+    "description": "เส้นวัดแนวตั้ง 3.46 เมตร ผู้ใช้ยืนยันความสูง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "reference_cctv.jpg",
+    "description": "อุปกรณ์ ท่อสาย และคานบริเวณเพดาน",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "reference_entrance.jpg",
+    "description": "ภาพอ้างอิงโถง ประตูกระจก ช่องซ่อมฝ้าและงานระบบ; โต๊ะเล็กที่เห็นในภาพถูกตัดออกจากโมเดลตามคำขอผู้ใช้",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "reference_classroom.jpg",
+    "description": "ผนังไม้ จอฉาย โต๊ะ เก้าอี้ หน้าต่างและเพดาน",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v7_remove_rear_column.png",
+    "description": "ลบเสาที่วงบนผนังหลังห้อง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v7_teacher_desk.png",
+    "description": "เลื่อนโต๊ะอาจารย์ติดแถวนักเรียนหน้าสุด",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v7_remove_front_upper_tvs.png",
+    "description": "ลบจอด้านบนผนังหน้าห้อง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v7_deepen_tv_beam.png",
+    "description": "ต่อคานและจุดยึดทีวีให้ถึงกัน",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v7_side_reference.png",
+    "description": "มุมมองผนังด้านข้าง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v7_side_windows.png",
+    "description": "เปลี่ยนผนังช่วงที่วงเป็นหน้าต่าง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v8_chair_reference.png",
+    "description": "ภาพขยายเก้าอี้จริงสำหรับแก้โครงขาและเบาะ",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v8_remove_entry_table.png",
+    "description": "ลบโต๊ะเดี่ยวในโถงหลังห้อง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v9_chair_side_reference.png",
+    "description": "ภาพด้านข้างเก้าอี้: ขาหน้าเกือบตั้งตรง ขาหลังเอียง และท่อเชื่อมพื้นโค้ง",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v10_door_reference.png",
+    "description": "ประตูจริง ขอบขวาชิดผนัง ช่องแสงและพัดลม",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v10_door_correction.png",
+    "description": "กรอบประตูโมเดลเดิมที่ต้องแก้",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v10_classroom_services.jpg",
+    "description": "ห้องจริงสำหรับอ้างอิงหลอดไฟและท่อเดินสาย",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v10_controls_reference.png",
+    "description": "ภาพอุปกรณ์ไฟฟ้าและที่ใส่รีโมตแอร์",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v11_hall_scale_correction.png",
+    "description": "โถงเดิมกว้างเกินไปและสั้นไป ใช้ภาพ reference_entrance.jpg ปรับสัดส่วนและไม่ใส่โต๊ะเดี่ยว",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v12_controls_correction.png",
+    "description": "คำแก้ไขเดิม: ย้ายคัตเอาต์/รีโมตจากเสาไปผนังและเหลือหนึ่งอัน; ตำแหน่งวงแดงรุ่น 13 ใช้แทนตำแหน่งนี้แล้ว",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v12_entry_correction.png",
+    "description": "Thin left entry column projection and widen hall/door to the right",
+    "source": "User attachment; unmodified copy"
+  },
+  {
+    "file": "v13_controls_correction.png",
+    "description": "วงแดงล่าสุดที่ใช้ในรุ่น 14: คัตเอาต์และรีโมตหนึ่งอันอยู่ใกล้เสากลางขึ้นทางซ้ายและสูงขึ้น",
+    "source": "User attachment; unmodified copy"
+  }
+]
