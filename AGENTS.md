@@ -21,16 +21,18 @@ When executing skills from `.agents/skills/`:
 ---
 
 ## 3. OpenGL Codebase Conventions
-- **Fixed-Function Compatibility**: The project runs on standard OpenGL fixed-function pipeline for education/demonstration compatibility. Do not break compatibility or introduce external shaders without explicit user instruction.
+- **GLSL 3.3 Shader Pipeline (Option B)**: The project runs on a custom GLSL 3.3 Compatibility Profile shader pipeline (`realistic_renderer.py`) replacing legacy fixed-function lighting with per-pixel GGX/Lambert PBR, PCF sun shadows, HDR, ACES tonemapping, bloom, FXAA, SSAO, and volumetric atmosphere.
 - **Pure Procedural Asset Rule**:
   - Never import external 3D models (`.obj`, `.gltf`, `.stl`, `.fbx`).
   - Never load external texture bitmaps (`.png`, `.jpg`).
+  - Never load external `.glsl` files; all shader sources must remain embedded Python string constants in `realistic_renderer.py`.
   - Textures must be procedurally generated via Pillow in [surface_materials.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/surface_materials.py).
-- **Pair Synchronization**:
-  - [classroom.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/classroom.py) and [surface_materials.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/surface_materials.py) must always remain compatible and side-by-side.
+- **Trio Synchronization**:
+  - [classroom.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/classroom.py), [surface_materials.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/surface_materials.py), and [realistic_renderer.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/realistic_renderer.py) must always remain compatible and side-by-side.
 - **Validation Checklist**:
   Before finishing a change:
-  1. `python -m py_compile classroom.py surface_materials.py` (Must exit code 0).
-  2. `python classroom.py --hidden --verify previews` (All view renders must complete without OpenGL errors).
-  3. Inspect [previews/verification.json](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/previews/verification.json) to ensure `opengl_errors == 0`.
+  1. `python -m py_compile classroom.py surface_materials.py realistic_renderer.py` (Must exit code 0).
+  2. `python -m unittest discover -s tests -p "test_*.py"` (All unit tests must pass).
+  3. `python classroom.py --hidden --verify previews` (All view renders must complete without OpenGL or shader errors).
+  4. Inspect [previews/verification.json](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/previews/verification.json) to ensure `opengl_errors == 0`, `shader_errors == []`, and `fbo_complete == true`.
 

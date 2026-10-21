@@ -1,8 +1,9 @@
 {
   "room": "S13-30612",
-  "opengl": "4.6.0 - Build 30.0.101.1273",
-  "renderer": "Intel(R) UHD Graphics",
-  "boxes": 2269,
+  "opengl": "3.3.0 - Build 30.0.101.1273",
+  "renderer": "glsl-330-compat",
+  "gl_renderer_hardware": "Intel(R) UHD Graphics",
+  "boxes": 2267,
   "student_tables": 36,
   "student_seats": 72,
   "seating_columns": 3,
@@ -107,13 +108,38 @@
     "sunlight",
     "interior",
     "god_rays",
-    "ambient"
+    "ambient",
+    "exposure",
+    "bloom",
+    "shadows"
   ],
+  "quality_modes": [
+    "low",
+    "high"
+  ],
+  "shader_errors": [],
+  "fbo_complete": true,
+  "frame_ms_low": 32.84,
+  "frame_ms_high": 39.03,
+  "shadow_check": {
+    "shadow": 69.2,
+    "lit": 154.81,
+    "pass": true
+  },
+  "lamp_bloom_check": {
+    "lamp": 243.34,
+    "ceiling": 151.07,
+    "pass": true
+  },
   "views": [
     "overview.png",
     "inside.png",
     "exterior.png",
-    "top.png"
+    "top.png",
+    "realistic_daylight.png",
+    "realistic_sunset_shadows.png",
+    "realistic_lamps_night.png",
+    "realistic_low_quality.png"
   ],
   "door_open_rendered": true,
   "tour_phases_rendered": 8,
