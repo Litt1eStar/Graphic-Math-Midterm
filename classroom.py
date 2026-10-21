@@ -7,6 +7,8 @@ and handles input. Units are meters; Z is up. All geometry is built in code.
 from __future__ import annotations
 
 import argparse
+import ctypes
+from array import array
 import json
 import math
 import random
@@ -22,6 +24,14 @@ try:
     from OpenGL.GLU import gluLookAt, gluPerspective, gluNewQuadric, gluSphere, gluCylinder, gluDisk
     from PIL import Image, ImageDraw, ImageFont
     from surface_materials import make_surface_images
+    from realistic_renderer import (
+        Renderer,
+        FrameState,
+        mat_perspective,
+        mat_look_at,
+        mat_mul,
+        transform_point,
+    )
 except ImportError as exc:
     print("Missing dependency:", exc)
     print("Install with: python -m pip install -r requirements.txt")
@@ -74,27 +84,78 @@ COLORS = {
     "trim": (.22, .26, .27), "metal": (.12, .15, .16),
     "steel": (.48, .52, .54), "chair": (.075, .10, .11),
     "chrome": (.64, .67, .69),
-    "wood": (.98, .98, .98), "panel": (.94, .94, .92),
+    "wood": (1.0, 1.0, 1.0), "panel": (.94, .94, .92),
     "wood_edge": (.69, .59, .43), "joint": (.73, .74, .71),
     "screen": (.93, .94, .89), "black": (.035, .055, .065),
-    "glass": (.79, .86, .87, .14), "light": (.92, .97, 1.0),
+    "glass": (.82, .88, .92, .06), "light": (.92, .97, 1.0),
     "door_glass": (.82, .86, .85, .10), "door_metal": (.09, .11, .11),
     "noticeboard": (.38, .055, .065),
     "pipe": (.72, .74, .69), "floor": (.78, .79, .75),
     "ground": (.30, .36, .40), "green": (.25, .42, .30),
     "imac_silver": (.70, .72, .74), "monitor_display": (.16, .24, .28),
     "luminaire_glow": (.92, .97, 1.0, .28),
+    "daylight": (1.0, 1.0, 1.0),
 }
 
+# (roughness, specular, bump)
+MATERIALS = {
+    "wall": (0.85, 0.20, 0.25),
+    "ceiling": (0.88, 0.15, 0.20),
+    "trim": (0.50, 0.35, 0.15),
+    "metal": (0.40, 0.60, 0.10),
+    "steel": (0.35, 0.70, 0.05),
+    "chair": (0.70, 0.25, 0.10),
+    "chrome": (0.15, 1.00, 0.00),
+    "wood": (0.42, 0.38, 0.35),
+    "panel": (0.55, 0.40, 0.20),
+    "wood_edge": (0.60, 0.35, 0.25),
+    "joint": (0.75, 0.20, 0.15),
+    "screen": (0.90, 0.10, 0.05),
+    "black": (0.60, 0.30, 0.10),
+    "glass": (0.05, 0.90, 0.00),
+    "light": (0.20, 0.50, 0.00),
+    "door_glass": (0.05, 1.00, 0.00),
+    "door_metal": (0.40, 0.60, 0.10),
+    "daylight": (1.0, 0.0, 0.0),
+    "noticeboard": (0.90, 0.10, 0.40),
+    "pipe": (0.40, 0.65, 0.05),
+    "floor": (0.35, 0.60, 0.40),
+    "ground": (0.85, 0.15, 0.30),
+    "green": (0.80, 0.20, 0.20),
+    "imac_silver": (0.25, 0.85, 0.02),
+    "monitor_display": (0.15, 0.90, 0.00),
+    "luminaire_glow": (0.20, 0.50, 0.00),
+}
 
-def make_texture(image, repeat=False):
+WHITE_TEXTURE: int = 0
+
+
+def get_white_texture() -> int:
+    global WHITE_TEXTURE
+    if not WHITE_TEXTURE:
+        WHITE_TEXTURE = glGenTextures(1)
+        glBindTexture(GL_TEXTURE_2D, WHITE_TEXTURE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
+        white_pixel = bytes([255, 255, 255, 255])
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, white_pixel)
+        glBindTexture(GL_TEXTURE_2D, 0)
+    return WHITE_TEXTURE
+
+
+def make_texture(image, repeat=False, repeat_s=None, repeat_t=None):
     image = image.convert("RGBA")
     tid = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, tid)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT if repeat else GL_CLAMP_TO_EDGE)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT if repeat else GL_CLAMP_TO_EDGE)
+    wrap_s = repeat_s if repeat_s is not None else repeat
+    wrap_t = repeat_t if repeat_t is not None else repeat
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT if wrap_s else GL_CLAMP_TO_EDGE)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT if wrap_t else GL_CLAMP_TO_EDGE)
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1)
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, image.width, image.height, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, image.tobytes())
@@ -103,34 +164,174 @@ def make_texture(image, repeat=False):
 
 
 def procedural_textures():
-    return {name: make_texture(im.transpose(Image.Transpose.FLIP_TOP_BOTTOM), name not in ("daylight", "sunset"))
-            for name, im in make_surface_images().items()}
+    get_white_texture()
+    textures = {}
+    for name, im in make_surface_images().items():
+        flipped = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        if name in ("daylight", "sunset"):
+            # Skybox wraps 360-degrees horizontally (repeat_s=True) but clamps at zenith/ground (repeat_t=False)
+            textures[name] = make_texture(flipped, repeat_s=True, repeat_t=False)
+        else:
+            textures[name] = make_texture(flipped, repeat=True)
+    return textures
 
 
-def draw_box(x, y, z, w, d, h, color, texture=0):
+def compute_box_face_uvs(w, d, h, texture_name=""):
+    """Return 6 face UV quad tuples: (top, bot, front, back, left, right).
+    Proportional/metric UV mapping eliminates texture stretching on thin edges and trims.
+    """
+    if texture_name == "wood":
+        edge_v = max(0.005, h / max(0.001, d))
+        uv_top   = ((0, 0), (1, 0), (1, 1), (0, 1))
+        uv_bot   = ((0, 0), (1, 0), (1, 1), (0, 1))
+        uv_front = ((0, 0), (1, 0), (1, edge_v), (0, edge_v))
+        uv_back  = ((1, 0), (0, 0), (0, edge_v), (1, edge_v))
+        uv_left  = ((0, 0), (1, 0), (1, edge_v), (0, edge_v))
+        uv_right = ((0, 0), (1, 0), (1, edge_v), (0, edge_v))
+    elif texture_name == "plaster":
+        m = 0.8
+        uv_top   = ((0, 0), (w * m, 0), (w * m, d * m), (0, d * m))
+        uv_bot   = ((0, 0), (w * m, 0), (w * m, d * m), (0, d * m))
+        uv_front = ((0, 0), (w * m, 0), (w * m, h * m), (0, h * m))
+        uv_back  = ((w * m, 0), (0, 0), (0, h * m), (w * m, h * m))
+        uv_left  = ((0, 0), (d * m, 0), (d * m, h * m), (0, h * m))
+        uv_right = ((0, 0), (d * m, 0), (d * m, h * m), (0, h * m))
+    elif texture_name == "panel":
+        m_u, m_v = 1.0, 1.0 / max(0.001, h)
+        uv_top   = ((0, 0), (w * m_u, 0), (w * m_u, d * m_u), (0, d * m_u))
+        uv_bot   = ((0, 0), (w * m_u, 0), (w * m_u, d * m_u), (0, d * m_u))
+        uv_front = ((0, 0), (w * m_u, 0), (w * m_u, 1.0), (0, 1.0))
+        uv_back  = ((w * m_u, 0), (0, 0), (0, 1.0), (w * m_u, 1.0))
+        uv_left  = ((0, 0), (d * m_u, 0), (d * m_u, 1.0), (0, 1.0))
+        uv_right = ((0, 0), (d * m_u, 0), (d * m_u, 1.0), (0, 1.0))
+    elif min(w, d) > 0 and h < min(w, d) * 0.35:
+        edge_v = max(0.005, h / max(0.001, max(w, d)))
+        uv_top   = ((0, 0), (1, 0), (1, 1), (0, 1))
+        uv_bot   = ((0, 0), (1, 0), (1, 1), (0, 1))
+        uv_front = ((0, 0), (1, 0), (1, edge_v), (0, edge_v))
+        uv_back  = ((1, 0), (0, 0), (0, edge_v), (1, edge_v))
+        uv_left  = ((0, 0), (1, 0), (1, edge_v), (0, edge_v))
+        uv_right = ((0, 0), (1, 0), (1, edge_v), (0, edge_v))
+    else:
+        uv_std = ((0, 0), (1, 0), (1, 1), (0, 1))
+        uv_top = uv_bot = uv_front = uv_back = uv_left = uv_right = uv_std
+    return (uv_top, uv_bot, uv_front, uv_back, uv_left, uv_right)
+
+
+# Mesh-heavy groups draw from GPU vertex buffers; display lists of many small
+# immediate-mode polygons are ~10x slower on some drivers (Intel iGPU).
+VBO_MIN_TRIANGLES = 2000
+VBO_EXCLUDED_GROUPS = ("glass", "lamps", "luminaire_glow")
+
+
+def draw_box(x, y, z, w, d, h, color, texture=0, bind_texture=True, texture_name=""):
     """Box origin is its minimum corner; outward face normals provide lighting."""
     glColor4f(*color) if len(color) == 4 else glColor3f(*color)
-    if texture:
+    if bind_texture:
+        active_tex = texture if texture else get_white_texture()
         glEnable(GL_TEXTURE_2D)
-        glBindTexture(GL_TEXTURE_2D, texture)
+        glBindTexture(GL_TEXTURE_2D, active_tex)
     a, b, c = x + w, y + d, z + h
+    uv_top, uv_bot, uv_front, uv_back, uv_left, uv_right = compute_box_face_uvs(w, d, h, texture_name)
     faces = [
-        ((0, 0, 1), ((x, y, c), (a, y, c), (a, b, c), (x, b, c))),
-        ((0, 0, -1), ((x, b, z), (a, b, z), (a, y, z), (x, y, z))),
-        ((0, -1, 0), ((x, y, z), (a, y, z), (a, y, c), (x, y, c))),
-        ((0, 1, 0), ((a, b, z), (x, b, z), (x, b, c), (a, b, c))),
-        ((-1, 0, 0), ((x, b, z), (x, y, z), (x, y, c), (x, b, c))),
-        ((1, 0, 0), ((a, y, z), (a, b, z), (a, b, c), (a, y, c))),
+        ((0, 0, 1),  ((x, y, c), (a, y, c), (a, b, c), (x, b, c)), uv_top),
+        ((0, 0, -1), ((x, b, z), (a, b, z), (a, y, z), (x, y, z)), uv_bot),
+        ((0, -1, 0), ((x, y, z), (a, y, z), (a, y, c), (x, y, c)), uv_front),
+        ((0, 1, 0),  ((a, b, z), (x, b, z), (x, b, c), (a, b, c)), uv_back),
+        ((-1, 0, 0), ((x, b, z), (x, y, z), (x, y, c), (x, b, c)), uv_left),
+        ((1, 0, 0),  ((a, y, z), (a, b, z), (a, b, c), (a, y, c)), uv_right),
     ]
     glBegin(GL_QUADS)
-    for normal, verts in faces:
+    for normal, verts, uvs in faces:
         glNormal3f(*normal)
-        for uv, vertex in zip(((0, 0), (1, 0), (1, 1), (0, 1)), verts):
+        for uv, vertex in zip(uvs, verts):
             glTexCoord2f(*uv)
             glVertex3f(*vertex)
     glEnd()
-    if texture:
+    if bind_texture:
         glDisable(GL_TEXTURE_2D)
+
+
+def generate_exterior_scenery_boxes(W, L, D, H):
+    """Generate multi-layer 3D exterior campus buildings, rooftops, tree canopies, and distant skyline.
+    Returns tuples: (x, y, z, w, d, h, color, roughness, specular).
+    """
+    boxes = []
+    ground_z = -14.0  # 6th floor is ~14m above street/courtyard level
+
+    # 1. Deep campus parkland & courtyard ground plane 6 stories below
+    boxes.append((-55.0, -65.0, ground_z - 0.4, 185.0, 155.0, 0.4, (0.34, 0.44, 0.30), 0.90, 0.05))
+    # Sunlit stone campus avenue & courtyard paths below window wall
+    boxes.append((14.5, -45.0, ground_z + 0.02, 7.5, 110.0, 0.08, (0.68, 0.65, 0.60), 0.80, 0.10))
+
+    # 2. Foreground 3D multi-tiered tree canopies along the campus avenue (X = 16..24m)
+    tree_configs = [
+        (17.5, -10.5, 0.35), (19.2, -4.2, -0.10), (17.0, 1.4, 0.25),
+        (20.0, 5.8, -0.25), (17.6, 10.2, 0.40), (19.5, 15.5, 0.05),
+        (17.2, 21.0, 0.20), (22.5, -1.2, -0.40), (22.8, 8.2, -0.15),
+    ]
+    for tx, ty, top_z in tree_configs:
+        trunk_h = (top_z - 2.6) - ground_z
+        # Tree trunk
+        boxes.append((tx - 0.28, ty - 0.28, ground_z, 0.56, 0.56, max(2.0, trunk_h), (0.36, 0.27, 0.20), 0.88, 0.04))
+        # Lower broad foliage tier
+        boxes.append((tx - 2.4, ty - 2.5, top_z - 2.8, 4.8, 5.0, 1.5, (0.24, 0.42, 0.22), 0.82, 0.08))
+        # Mid sunlit olive-green crown
+        boxes.append((tx - 1.9, ty - 2.0, top_z - 1.4, 3.8, 4.0, 1.1, (0.31, 0.50, 0.26), 0.78, 0.10))
+        # Upper golden-green sunlit canopy cap
+        boxes.append((tx - 1.2, ty - 1.3, top_z - 0.4, 2.4, 2.6, 0.65, (0.38, 0.56, 0.29), 0.75, 0.12))
+
+    # 3. Mid-ground 3D campus academic buildings (X = 26..48m) with facades, ledges, windows & rooftops
+    campus_buildings = [
+        # (x, y, w, d, top_z, wall_col, accent_col)
+        (27.0, -18.0, 10.5, 14.0, 1.15, (0.86, 0.81, 0.73), (0.72, 0.65, 0.56)),
+        (30.5, -1.8,  11.0, 11.5, 1.55, (0.89, 0.84, 0.76), (0.76, 0.66, 0.55)),
+        (26.5, 11.2,  10.0, 13.5, 0.85, (0.84, 0.78, 0.70), (0.70, 0.62, 0.54)),
+        (41.0, -10.0, 12.5, 16.0, 2.15, (0.82, 0.79, 0.74), (0.68, 0.64, 0.58)),
+        (42.5, 8.5,   12.0, 17.5, 1.90, (0.85, 0.80, 0.74), (0.71, 0.65, 0.58)),
+        # Opposite side (-X window bay view)
+        (-34.0, -8.0, 11.0, 22.0, 1.25, (0.85, 0.80, 0.73), (0.72, 0.65, 0.57)),
+    ]
+    for bx, by, bw, bd, top_z, wcol, acol in campus_buildings:
+        bh = top_z - ground_z
+        # Main 3D building mass
+        boxes.append((bx, by, ground_z, bw, bd, bh, wcol, 0.72, 0.15))
+        # Terracotta/warm concrete roof parapet & cornice ledge
+        boxes.append((bx - 0.25, by - 0.25, top_z, bw + 0.50, bd + 0.50, 0.28, acol, 0.68, 0.18))
+        # Rooftop gravel surface & mechanical penthouse
+        boxes.append((bx + 0.35, by + 0.35, top_z + 0.28, bw - 0.70, bd - 0.70, 0.06, (0.58, 0.57, 0.55), 0.85, 0.08))
+        boxes.append((bx + bw * 0.28, by + bd * 0.32, top_z + 0.34, bw * 0.36, bd * 0.28, 0.85, acol, 0.75, 0.14))
+        # Architectural floor ledges & dark reflective window ribbons facing the classroom
+        face_x = bx - 0.14 if bx > 0 else bx + bw - 0.04
+        for fz in (top_z - 1.15, top_z - 2.65, top_z - 4.15, top_z - 5.65):
+            if fz > ground_z + 1.0:
+                # Sun-breaker horizontal fin
+                boxes.append((face_x - 0.08, by + 0.4, fz + 0.52, 0.22, bd - 0.8, 0.12, acol, 0.65, 0.20))
+                # Recessed dark glass window band
+                boxes.append((face_x, by + 0.8, fz - 0.35, 0.16, bd - 1.6, 0.82, (0.18, 0.25, 0.32), 0.18, 0.85))
+
+    # 4. Distant 3D city skyline towers (X = 65..115m) for deep horizon parallax & aerial perspective
+    skyline_towers = [
+        (68.0, -34.0, 11.0, 14.0, 5.2,  (0.66, 0.71, 0.78)),
+        (74.0, -16.5, 12.5, 13.0, 7.4,  (0.62, 0.68, 0.76)),
+        (66.0, -1.5,  10.0, 11.5, 4.3,  (0.68, 0.73, 0.80)),
+        (82.0, 8.0,   14.0, 15.0, 8.6,  (0.60, 0.66, 0.75)),
+        (70.0, 22.5,  11.5, 13.5, 5.8,  (0.65, 0.70, 0.78)),
+        (96.0, -24.0, 15.0, 16.0, 9.8,  (0.58, 0.65, 0.74)),
+        (98.0, -3.0,  14.5, 15.5, 6.9,  (0.61, 0.67, 0.76)),
+        (94.0, 16.0,  15.0, 16.0, 10.4, (0.57, 0.64, 0.73)),
+        (92.0, 35.0,  13.5, 14.5, 6.4,  (0.63, 0.69, 0.77)),
+        # Distant -X towers
+        (-78.0, -12.0, 13.0, 16.0, 6.5, (0.62, 0.68, 0.76)),
+        (-85.0, 10.0,  14.0, 15.0, 8.0, (0.60, 0.66, 0.75)),
+    ]
+    for tx, ty, tw, td, top_z, tcol in skyline_towers:
+        th = top_z - ground_z
+        boxes.append((tx, ty, ground_z, tw, td, th, tcol, 0.45, 0.45))
+        # Stepped crown tier
+        boxes.append((tx + tw * 0.18, ty + td * 0.18, top_z, tw * 0.64, td * 0.64, 1.15, tcol, 0.40, 0.50))
+
+    return boxes
 
 
 @dataclass
@@ -139,6 +340,9 @@ class LightingState:
     interior_intensity: float = 1.0
     god_rays_opacity: float = 0.35
     ambient_brightness: float = 0.40
+    exposure_ev: float = 0.0
+    bloom_strength: float = 0.35
+    shadow_softness: float = 0.40
 
     def set_sun(self, val: float):
         self.sun_intensity = max(0.0, min(2.0, float(val)))
@@ -151,6 +355,15 @@ class LightingState:
 
     def set_ambient(self, val: float):
         self.ambient_brightness = max(0.0, min(1.0, float(val)))
+
+    def set_exposure(self, val: float):
+        self.exposure_ev = max(-2.0, min(2.0, float(val)))
+
+    def set_bloom(self, val: float):
+        self.bloom_strength = max(0.0, min(1.0, float(val)))
+
+    def set_shadow_softness(self, val: float):
+        self.shadow_softness = max(0.0, min(1.0, float(val)))
 
     def scale_color(self, base: tuple, factor: float) -> tuple:
         f = max(0.0, float(factor))
@@ -169,6 +382,12 @@ class LightingState:
             self.set_god_rays(self.god_rays_opacity + delta)
         elif index == 3:
             self.set_ambient(self.ambient_brightness + delta)
+        elif index == 4:
+            self.set_exposure(self.exposure_ev + delta)
+        elif index == 5:
+            self.set_bloom(self.bloom_strength + delta)
+        elif index == 6:
+            self.set_shadow_softness(self.shadow_softness + delta)
 
 
 @dataclass
@@ -182,6 +401,7 @@ class Part:
     angle_z: float = 0
     pivot: tuple | None = None
     mesh: tuple = ()
+    material: str = "wall"
 
 
 class Classroom:
@@ -190,6 +410,7 @@ class Classroom:
         self.r = config["room"]
         self.parts = []
         self.lists = {}
+        self.mesh_vbos = {}  # (group, boundary) -> (vbo, vertex_count)
         self.textures = procedural_textures()
         self.quadric = gluNewQuadric()
         self.luminaire_positions = []
@@ -200,7 +421,8 @@ class Classroom:
     def box(self, group, x, y, z, w, d, h, material="wall", texture="", boundary="", tilt_x=0, angle_z=0, pivot=None):
         if min(w, d, h) <= 0:
             raise ValueError(f"Invalid box dimensions in {group}: {(w, d, h)}")
-        self.parts.append(Part(group, (x, y, z, w, d, h), COLORS[material], texture, boundary, tilt_x, angle_z, pivot))
+        tex = texture or ("plaster" if material == "wall" else "")
+        self.parts.append(Part(group, (x, y, z, w, d, h), COLORS[material], tex, boundary, tilt_x, angle_z, pivot, material=material))
 
     def mesh_part(self, group, faces, material, boundary=""):
         """Store normals and polygon vertices, with bounds for layout checks."""
@@ -208,7 +430,7 @@ class Classroom:
         low = tuple(min(v[i] for v in vertices) for i in range(3))
         high = tuple(max(v[i] for v in vertices) for i in range(3))
         self.parts.append(Part(group, low+tuple(high[i]-low[i] for i in range(3)),
-                               COLORS[material], boundary=boundary, mesh=tuple(faces)))
+                               COLORS[material], boundary=boundary, mesh=tuple(faces), material=material))
 
     def tube(self, group, points, radius=.012, material="chrome", boundary=""):
         """Round steel tubing following a bent centerline; no square chair legs."""
@@ -280,7 +502,7 @@ class Classroom:
         B = X + V
         self.vestibule_x = X
         self.vestibule_right = B
-        self.box("ground", -5, -5, -.34, W + 10, T + 10, .12, "ground")
+        self.box("ground", -28, -22, -.34, W + 56, T + 44, .12, "ground")
         self.box("floor", 0, 0, -.20, W, L, .20, "floor")
         self.box("floor", X, L, -.20, V, D, .20, "floor")
         # The entry hall is BEHIND the classroom, as clarified by the user.
@@ -513,11 +735,7 @@ class Classroom:
         self.tube("ceiling",[(.045,end-.62,h-.04),(.28,end-.62,h-.04),
                               (.28,end-.43,h-.04),(.28,end-.43,h-.55),
                               (.28,end-.27,h-.55)],.009,"pipe")
-        # Light exterior context makes the glazing read as clear glass. These
-        # backdrop planes are illustrative scenery, not measured architecture.
-        for x,y,depth,boundary in ((w+.45,.48,length-.96,"right"),
-                                    (-.48,.48,length/2-.78,"left")):
-            self.box("daylight",x,y,.90,.015,depth,2.05,"wood","daylight",boundary)
+        # Exterior view is provided by the continuous 360-degree panoramic skybox (build_skybox_list)
         self.box("outside_entry",0,end+.10,-.025,hall_w,2.45,.025,"floor","floor","entry")
         self.box("outside_entry",0,end+2.55,0,hall_w,.10,h,"wall",boundary="entry")
         self.box("outside_entry",.35,end+2.51,1.10,1.75,.035,1.0,"noticeboard",boundary="entry")
@@ -662,44 +880,101 @@ class Classroom:
             self.box(group, x+side*.28-.017, y-.04, .52, .034, .034, .14, "steel")
             self.box(group, x+side*.28-.033, y-.20, .65, .066, .43, .035, "chair")
 
+    def build_mesh_vbo(self, parts):
+        """Pack mesh parts into one interleaved VBO: position, normal, color, material."""
+        data = array("f")
+        for part in parts:
+            mat = MATERIALS.get(part.material, (0.5, 0.5, 0.1))
+            attrs = (*part.color, *mat)
+            for normal, vertices in part.mesh:
+                v0 = vertices[0]
+                for i in range(1, len(vertices) - 1):
+                    for v in (v0, vertices[i], vertices[i + 1]):
+                        data.extend(v); data.extend(normal); data.extend(attrs)
+        vbo = glGenBuffers(1)
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glBufferData(GL_ARRAY_BUFFER, len(data) * 4, data.tobytes(), GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        return vbo, len(data) // 12
+
+    def draw_mesh_vbo(self, key):
+        entry = self.mesh_vbos.get(key)
+        if not entry:
+            return
+        vbo, count = entry
+        stride = 48
+        glBindBuffer(GL_ARRAY_BUFFER, vbo)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_NORMAL_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        glEnableClientState(GL_SECONDARY_COLOR_ARRAY)
+        glVertexPointer(3, GL_FLOAT, stride, ctypes.c_void_p(0))
+        glNormalPointer(GL_FLOAT, stride, ctypes.c_void_p(12))
+        glColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(24))
+        glSecondaryColorPointer(3, GL_FLOAT, stride, ctypes.c_void_p(36))
+        glDrawArrays(GL_TRIANGLES, 0, count)
+        glDisableClientState(GL_SECONDARY_COLOR_ARRAY)
+        glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_NORMAL_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
     def compile(self):
         batches = {}
         for p in self.parts:
             batches.setdefault((p.group, p.boundary), []).append(p)
         for key, batch in batches.items():
+            if key[0] not in VBO_EXCLUDED_GROUPS and                     sum(len(f[1]) - 2 for p in batch if p.mesh for f in p.mesh) >= VBO_MIN_TRIANGLES:
+                self.mesh_vbos[key] = self.build_mesh_vbo([p for p in batch if p.mesh])
+                batch = [p for p in batch if not p.mesh]
             lid = glGenLists(1)
             glNewList(lid, GL_COMPILE)
+            in_triangles = False
             for part in batch:
+                mat_rough, mat_spec, mat_bump = MATERIALS.get(part.material, (0.5, 0.5, 0.1))
                 if part.mesh:
+                    # Merge consecutive meshes into one GL_TRIANGLES block. Thousands of
+                    # tiny GL_POLYGON begin/end pairs are very slow on some drivers.
+                    if not in_triangles:
+                        glBegin(GL_TRIANGLES)
+                        in_triangles = True
+                    glSecondaryColor3f(mat_rough, mat_spec, mat_bump)
                     glColor3f(*part.color)
-                    if part.color == COLORS["chrome"]:
-                        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (.75, .75, .75, 1))
-                        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 72)
                     for normal, vertices in part.mesh:
-                        glBegin(GL_POLYGON)
                         glNormal3f(*normal)
-                        for vertex in vertices:
-                            glVertex3f(*vertex)
-                        glEnd()
-                    if part.color == COLORS["chrome"]:
-                        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0, 0, 0, 1))
-                        glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 0)
-                elif part.tilt_x or part.angle_z:
+                        v0 = vertices[0]
+                        for i in range(1, len(vertices) - 1):
+                            glVertex3f(*v0)
+                            glVertex3f(*vertices[i])
+                            glVertex3f(*vertices[i + 1])
+                    continue
+                if in_triangles:
+                    glEnd()
+                    in_triangles = False
+                glSecondaryColor3f(mat_rough, mat_spec, mat_bump)
+                if part.tilt_x or part.angle_z:
                     x, y, z, w, d, h = part.dims
                     px, py, pz = part.pivot or (x+w/2, y+d/2, z+h/2)
                     glPushMatrix(); glTranslatef(px, py, pz)
                     glRotatef(part.angle_z, 0, 0, 1); glRotatef(part.tilt_x, 1, 0, 0)
-                    draw_box(x-px, y-py, z-pz, w, d, h, part.color, self.textures.get(part.texture, 0))
+                    draw_box(x-px, y-py, z-pz, w, d, h, part.color, self.textures.get(part.texture, 0), texture_name=part.texture)
                     glPopMatrix()
                 else:
-                    tex = 0 if part.group == "daylight" else self.textures.get(part.texture, 0)
-                    draw_box(*part.dims, part.color, tex)
+                    if part.group == "daylight":
+                        draw_box(*part.dims, part.color, bind_texture=False)
+                    else:
+                        tex = self.textures.get(part.texture, 0)
+                        draw_box(*part.dims, part.color, tex, texture_name=part.texture)
+            if in_triangles:
+                glEnd()
             glEndList()
             self.lists[key] = lid
         self.floor_list = glGenLists(1)
         glNewList(self.floor_list, GL_COMPILE)
         W, L = self.r["width"], self.r["depth"]
         V, D = self.r["vestibule_width"], self.r["vestibule_depth"]
+        mat_rough, mat_spec, mat_bump = MATERIALS["floor"]
+        glSecondaryColor3f(mat_rough, mat_spec, mat_bump)
         glEnable(GL_TEXTURE_2D)
         glBindTexture(GL_TEXTURE_2D, self.textures["floor"])
         glColor3f(.94, .95, .93)
@@ -713,7 +988,6 @@ class Classroom:
                 glVertex3f(x, y, .003)
         glEnd()
         glDisable(GL_TEXTURE_2D)
-        glDisable(GL_LIGHTING)
         glColor3f(.67, .69, .67)
         glBegin(GL_LINES)
         for x in range(math.ceil(W)):
@@ -725,11 +999,10 @@ class Classroom:
         for y in range(math.ceil(L), math.ceil(T)):
             glVertex3f(X, y, .009); glVertex3f(B, y, .009)
         glEnd()
-        glEnable(GL_LIGHTING)
         glEndList()
         self.contact_list=glGenLists(1)
         glNewList(self.contact_list,GL_COMPILE)
-        glDisable(GL_LIGHTING); glDepthMask(GL_FALSE)
+        glDepthMask(GL_FALSE)
         def contact(x,y,rx,ry,opacity):
             glBegin(GL_TRIANGLE_FAN)
             glColor4f(.13,.14,.14,opacity); glVertex3f(x,y,.014)
@@ -747,18 +1020,125 @@ class Classroom:
                 for xx in (x-.25,x+.25): contact(xx,y,.06,.34,.23)
         x,y,w,d,_=self.instructor_desk
         contact(x+w/2,y+d/2,w*.55,d*.75,.16)
-        glDepthMask(GL_TRUE); glEnable(GL_LIGHTING)
+        glDepthMask(GL_TRUE)
         glEndList()
+        self.god_ray_volumes = {
+            "daylight": self.compute_god_ray_volumes("daylight"),
+            "sunset": self.compute_god_ray_volumes("sunset")
+        }
         self.god_rays_lists = {
             "daylight": self.build_god_rays("daylight"),
             "sunset": self.build_god_rays("sunset")
         }
         self.interior_pool_list = self.build_interior_light_pools()
+        self.skybox_list = self.build_skybox_list(W, L, D)
+        self.exterior_scenery_list = self.build_exterior_scenery_list(W, L, D, self.r["height"])
+
+    def build_skybox_list(self, W, L, D):
+        """Build continuous 360-degree panoramic skybox cylinder enveloping the classroom at far distance."""
+        lid = glGenLists(1)
+        glNewList(lid, GL_COMPILE)
+        mat_rough, mat_spec, mat_bump = MATERIALS.get("daylight", (1.0, 0.0, 0.0))
+        glSecondaryColor3f(mat_rough, mat_spec, mat_bump)
+        glColor3f(1.0, 1.0, 1.0)
+        cx = W * 0.5
+        cy = (L + D) * 0.5
+        R = 160.0
+        z_bot, z_top = -45.0, 95.0
+        segments = 48
+
+        glBegin(GL_QUADS)
+        for i in range(segments):
+            a0 = i * math.tau / segments
+            a1 = (i + 1) * math.tau / segments
+            u0 = i / float(segments)
+            u1 = (i + 1) / float(segments)
+            x0, y0 = cx + R * math.cos(a0), cy + R * math.sin(a0)
+            x1, y1 = cx + R * math.cos(a1), cy + R * math.sin(a1)
+
+            # Inward facing normals towards room center
+            glNormal3f(-math.cos(a0), -math.sin(a0), 0)
+            glTexCoord2f(u0, 0.0)
+            glVertex3f(x0, y0, z_bot)
+
+            glNormal3f(-math.cos(a1), -math.sin(a1), 0)
+            glTexCoord2f(u1, 0.0)
+            glVertex3f(x1, y1, z_bot)
+
+            glNormal3f(-math.cos(a1), -math.sin(a1), 0)
+            glTexCoord2f(u1, 1.0)
+            glVertex3f(x1, y1, z_top)
+
+            glNormal3f(-math.cos(a0), -math.sin(a0), 0)
+            glTexCoord2f(u0, 1.0)
+            glVertex3f(x0, y0, z_top)
+        glEnd()
+
+        # Ground cap
+        glBegin(GL_TRIANGLE_FAN)
+        glNormal3f(0, 0, 1)
+        glTexCoord2f(0.5, 0.0)
+        glVertex3f(cx, cy, z_bot)
+        for i in range(segments + 1):
+            a = i * math.tau / segments
+            glTexCoord2f(i / float(segments), 0.0)
+            glVertex3f(cx + R * math.cos(a), cy + R * math.sin(a), z_bot)
+        glEnd()
+
+        # Sky zenith cap
+        glBegin(GL_TRIANGLE_FAN)
+        glNormal3f(0, 0, -1)
+        glTexCoord2f(0.5, 1.0)
+        glVertex3f(cx, cy, z_top)
+        for i in range(segments + 1):
+            a = -i * math.tau / segments
+            glTexCoord2f(1.0 - (i / float(segments)), 1.0)
+            glVertex3f(cx + R * math.cos(a), cy + R * math.sin(a), z_top)
+        glEnd()
+        glEndList()
+        return lid
+
+    def build_exterior_scenery_list(self, W, L, D, H):
+        """Compile 3D multi-layer campus buildings, rooftops, tree canopies below 6th floor, and distant skyline."""
+        lid = glGenLists(1)
+        glNewList(lid, GL_COMPILE)
+        white_tex = get_white_texture()
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, white_tex)
+        for x, y, z, w, d, h, color, rough, spec in generate_exterior_scenery_boxes(W, L, D, H):
+            glSecondaryColor3f(rough, spec, 0.02)
+            draw_box(x, y, z, w, d, h, color, texture=white_tex, bind_texture=False)
+        glDisable(GL_TEXTURE_2D)
+        glEndList()
+        return lid
+
+    def compute_god_ray_volumes(self, preset="daylight"):
+        W, L = self.r["width"], self.r["depth"]
+        sill, win_top = .94, 2.82
+        is_sunset = (preset == "sunset")
+        dx = -9.6 if is_sunset else -4.8
+        dy = -0.55 if is_sunset else 0.35
+        dz = -1.15 if is_sunset else -1.65
+
+        vols = []
+        for i in range(10):
+            y0 = 0.48 + i * (L - 0.96) / 10 + 0.03
+            y1 = 0.48 + (i + 1) * (L - 0.96) / 10 - 0.03
+            z0 = sill + 0.08
+            z1 = win_top - 0.06
+
+            min_x = min(W, W + dx)
+            max_x = max(W, W + dx)
+            min_y = min(y0, y0 + dy, y1, y1 + dy)
+            max_y = max(y0, y0 + dy, y1, y1 + dy)
+            min_z = min(max(0.015, z0 + dz), z0)
+            max_z = max(z1, max(0.75, z1 + dz))
+            vols.append(((min_x, min_y, min_z), (max_x, max_y, max_z)))
+        return vols
 
     def build_interior_light_pools(self):
         lid = glGenLists(1)
         glNewList(lid, GL_COMPILE)
-        glDisable(GL_LIGHTING)
         glDepthMask(GL_FALSE)
         glEnable(GL_BLEND)
         glBlendFunc(GL_SRC_ALPHA, GL_ONE)
@@ -786,7 +1166,6 @@ class Classroom:
                         glEnd()
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         glDepthMask(GL_TRUE)
-        glEnable(GL_LIGHTING)
         glEndList()
         return lid
 
@@ -795,60 +1174,74 @@ class Classroom:
         sill, win_top = .94, 2.82
         lid = glGenLists(1)
         glNewList(lid, GL_COMPILE)
-        glDisable(GL_LIGHTING)
-        glDepthMask(GL_FALSE)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE)
 
         is_sunset = (preset == "sunset")
-        # Daylight: steeper, cooler, extends 4.8m into room
-        # Sunset: low dramatic angle, warm golden, extends 9.6m across desks
-        dx = -9.6 if is_sunset else -4.8
+        # Daylight: warm nostalgic afternoon angle extending 5.4m into room
+        # Sunset: low golden-hour angle extending 9.6m across desks
+        dx = -9.6 if is_sunset else -5.4
         dy = -0.55 if is_sunset else 0.35
         dz = -1.15 if is_sunset else -1.65
 
-        c_origin = (1.0, 0.65, 0.22, 0.26) if is_sunset else (0.85, 0.94, 1.0, 0.12)
-        c_term = (1.0, 0.50, 0.15, 0.0) if is_sunset else (0.85, 0.94, 1.0, 0.0)
+        n_strata = 10
+        n_curtains = 5
+        n_segs = 6
 
         glBegin(GL_QUADS)
         for i in range(10):
-            y0 = 0.48 + i * (L - 0.96) / 10 + 0.03
-            y1 = 0.48 + (i + 1) * (L - 0.96) / 10 - 0.03
-            z0 = sill + 0.08
-            z1 = win_top - 0.06
+            y0 = 0.48 + i * (L - 0.96) / 10 + 0.02
+            y1 = 0.48 + (i + 1) * (L - 0.96) / 10 - 0.02
+            z0 = sill + 0.06
+            z1 = win_top - 0.05
 
-            p0 = (W, y0, z0)
-            p1 = (W, y1, z0)
-            p2 = (W, y1, z1)
-            p3 = (W, y0, z1)
+            # 1. Slanted horizontal volumetric strata (feathered across Y and weighted across Z)
+            glNormal3f(0.0, 0.0, 1.0)
+            for s in range(n_strata):
+                wz = (s + 0.5) / n_strata
+                layer_w = math.sin(wz * math.pi) ** 1.15
+                z_start = z0 + wz * (z1 - z0)
+                glColor4f(1.0, 1.0, 1.0, layer_w)
+                for k in range(n_segs):
+                    t0 = k / n_segs
+                    t1 = (k + 1) / n_segs
+                    x_a = W + dx * t0
+                    x_b = W + dx * t1
+                    y0_a = y0 + dy * t0
+                    y1_a = y1 + dy * t0
+                    y0_b = y0 + dy * t1
+                    y1_b = y1 + dy * t1
+                    z_a = max(0.02, z_start + dz * t0)
+                    z_b = max(0.02, z_start + dz * t1)
 
-            q0 = (W + dx, y0 + dy, max(0.015, z0 + dz))
-            q1 = (W + dx, y1 + dy, max(0.015, z0 + dz))
-            q2 = (W + dx, y1 + dy, max(0.75, z1 + dz))
-            q3 = (W + dx, y0 + dy, max(0.75, z1 + dz))
+                    glTexCoord2f(t0, 0.0); glVertex3f(x_a, y0_a, z_a)
+                    glTexCoord2f(t0, 1.0); glVertex3f(x_a, y1_a, z_a)
+                    glTexCoord2f(t1, 1.0); glVertex3f(x_b, y1_b, z_b)
+                    glTexCoord2f(t1, 0.0); glVertex3f(x_b, y0_b, z_b)
 
-            # Bottom face
-            glColor4f(*c_origin); glVertex3f(*p0); glVertex3f(*p1)
-            glColor4f(*c_term); glVertex3f(*q1); glVertex3f(*q0)
-            # Top face
-            glColor4f(*c_origin); glVertex3f(*p2); glVertex3f(*p3)
-            glColor4f(*c_term); glVertex3f(*q3); glVertex3f(*q2)
-            # Left face
-            glColor4f(*c_origin); glVertex3f(*p3); glVertex3f(*p0)
-            glColor4f(*c_term); glVertex3f(*q0); glVertex3f(*q3)
-            # Right face
-            glColor4f(*c_origin); glVertex3f(*p1); glVertex3f(*p2)
-            glColor4f(*c_term); glVertex3f(*q2); glVertex3f(*q1)
-            # Interior cross-slice for enhanced density
-            mid_z = (z0 + z1) / 2
-            mid_qz = (q0[2] + q2[2]) / 2
-            glColor4f(*c_origin); glVertex3f(W, y0, mid_z); glVertex3f(W, y1, mid_z)
-            glColor4f(*c_term); glVertex3f(W + dx, y1 + dy, mid_qz); glVertex3f(W + dx, y0 + dy, mid_qz)
+            # 2. Longitudinal vertical curtains (feathered across Z and weighted across Y)
+            glNormal3f(0.0, 1.0, 0.0)
+            for c in range(n_curtains):
+                wy = (c + 0.5) / n_curtains
+                layer_w = (math.sin(wy * math.pi) ** 1.15) * 0.75
+                y_start = y0 + wy * (y1 - y0)
+                glColor4f(1.0, 1.0, 1.0, layer_w)
+                for k in range(n_segs):
+                    t0 = k / n_segs
+                    t1 = (k + 1) / n_segs
+                    x_a = W + dx * t0
+                    x_b = W + dx * t1
+                    y_a = y_start + dy * t0
+                    y_b = y_start + dy * t1
+                    z0_a = max(0.02, z0 + dz * t0)
+                    z1_a = max(0.45, z1 + dz * t0)
+                    z0_b = max(0.02, z0 + dz * t1)
+                    z1_b = max(0.45, z1 + dz * t1)
+
+                    glTexCoord2f(t0, 0.0); glVertex3f(x_a, y_a, z0_a)
+                    glTexCoord2f(t0, 1.0); glVertex3f(x_a, y_a, z1_a)
+                    glTexCoord2f(t1, 1.0); glVertex3f(x_b, y_b, z1_b)
+                    glTexCoord2f(t1, 0.0); glVertex3f(x_b, y_b, z0_b)
         glEnd()
 
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glDepthMask(GL_TRUE)
-        glEnable(GL_LIGHTING)
         glEndList()
         return lid
 
@@ -896,96 +1289,181 @@ class Classroom:
             draw_box(self.door_x+.045+i*(dw/2),self.door_y-.006,2.345,dw/2-.067,.012,dh-2.39,COLORS["door_glass"])
         glDepthMask(GL_TRUE)
 
-    def draw(self, eye, cutaway, ceiling, door_angle, lighting_preset="daylight", interior_lights=True, god_rays=True, lighting_state=None):
-        if lighting_state is None:
-            lighting_state = LightingState()
-
-        is_sunset = (lighting_preset == "sunset")
-        if is_sunset:
-            glLightfv(GL_LIGHT0, GL_POSITION, (22.0, 4.0, 3.2, 1.0))
-            sun_color = lighting_state.scale_color((1.0, 0.58, 0.20, 1.0), lighting_state.sun_intensity)
-            base_ambient = (0.24, 0.21, 0.19, 1.0) if interior_lights else (0.16, 0.14, 0.14, 1.0)
-        else:
-            glLightfv(GL_LIGHT0, GL_POSITION, (self.r["width"] * 1.5, 6.0, 14.0, 1.0))
-            sun_color = lighting_state.scale_color((0.85, 0.88, 0.90, 1.0), lighting_state.sun_intensity)
-            base_ambient = (0.44, 0.44, 0.44, 1.0) if interior_lights else (0.26, 0.26, 0.26, 1.0)
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, sun_color)
-
-        ambient = lighting_state.scale_color(base_ambient, lighting_state.ambient_brightness / 0.40)
-        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, ambient)
-
-        if interior_lights and lighting_state.interior_intensity > 0.001:
-            l1 = lighting_state.scale_color((.20, .21, .22, 1), lighting_state.interior_intensity)
-            l2 = lighting_state.scale_color((.35, .35, .34, 1), lighting_state.interior_intensity)
-            glLightfv(GL_LIGHT1, GL_DIFFUSE, l1)
-            glLightfv(GL_LIGHT2, GL_DIFFUSE, l2)
-        else:
-            glLightfv(GL_LIGHT1, GL_DIFFUSE, (.0, .0, .0, 1))
-            glLightfv(GL_LIGHT2, GL_DIFFUSE, (.0, .0, .0, 1))
+    def draw_opaque(self, frame):
+        eye = frame.eye
+        cutaway = frame.cutaway
+        ceiling = frame.ceiling
+        is_sunset = (frame.lighting_preset == "sunset")
+        white_tex = get_white_texture()
+        glActiveTexture(GL_TEXTURE0)
 
         for (group, boundary), lid in self.lists.items():
             if group in ("glass", "lamps", "luminaire_glow"):
                 continue
+            if group == "ground" and not cutaway:
+                continue
             if (group in ("ceiling", "beams") or group.startswith("overhead_tv")) and not ceiling:
                 continue
-            if group in ("daylight","outside_entry") and (cutaway or not
+            if group == "outside_entry" and (cutaway or not
                     (0 <= eye[0] <= self.r["width"] and 0 <= eye[1] <= self.door_y)):
                 continue
             if self.boundary_visible(boundary, eye, cutaway):
-                if group == "daylight":
-                    glDisable(GL_LIGHTING)
-                    glEnable(GL_TEXTURE_2D)
-                    glBindTexture(GL_TEXTURE_2D, self.textures["sunset" if is_sunset else "daylight"])
+                glEnable(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, white_tex)
                 glCallList(lid)
-                if group == "daylight":
-                    glDisable(GL_TEXTURE_2D)
-                    glEnable(GL_LIGHTING)
+                self.draw_mesh_vbo((group, boundary))
+
         glCallList(self.floor_list)
-        glCallList(self.contact_list)
-        if interior_lights and lighting_state.interior_intensity > 0.01:
-            glCallList(self.interior_pool_list)
-        if god_rays and lighting_state.god_rays_opacity > 0.01 and lighting_preset in self.god_rays_lists:
-            glCallList(self.god_rays_lists[lighting_preset])
-        # White turret camera attached beneath the beam, with lens + IR window.
+
+        # Sky dome & 3D campus exterior, drawn after the room so the costly sky shader
+        # only runs on pixels still visible through windows and doors.
+        if not cutaway:
+            prog = glGetIntegerv(GL_CURRENT_PROGRAM)
+            loc = glGetUniformLocation(prog, "u_emissive_factor") if prog else -1
+            sky_loc = glGetUniformLocation(prog, "u_is_skybox") if prog else -1
+            if loc >= 0 or prog == 0:
+                glEnable(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, white_tex)
+                glCallList(self.exterior_scenery_list)
+                if sky_loc >= 0:
+                    glUniform1i(sky_loc, 1)
+                if loc >= 0:
+                    glUniform1f(loc, 1.25 if is_sunset else 1.10)
+                glEnable(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, self.textures["sunset" if is_sunset else "daylight"])
+                glDepthMask(GL_FALSE)
+                glCallList(self.skybox_list)
+                glDepthMask(GL_TRUE)
+                if sky_loc >= 0:
+                    glUniform1i(sky_loc, 0)
+                if loc >= 0:
+                    glUniform1f(loc, 0.0)
+                glBindTexture(GL_TEXTURE_2D, white_tex)
+
+        if getattr(frame, "quality", "high") == "low":
+            glCallList(self.contact_list)
+
+        # Turret CCTV camera
         if ceiling:
             glPushMatrix()
-            glTranslatef(self.vestibule_x+.28,self.door_y-.27,self.r["height"]-.58)
-            glColor3f(.86,.87,.83)
-            gluCylinder(self.quadric,.115,.115,.06,24,1)
-            gluDisk(self.quadric,0,.115,24,1)
-            glTranslatef(0,0,-.055)
-            gluSphere(self.quadric,.092,24,16)
-            for dx,radius in ((-.036,.027),(.036,.024)):
-                glPushMatrix(); glTranslatef(dx,-.068,-.032)
-                glColor3f(.025,.03,.035); gluSphere(self.quadric,radius,16,10)
-                glTranslatef(-.004,-.015,.005); glColor3f(.12,.18,.20)
-                gluSphere(self.quadric,radius*.47,12,8); glPopMatrix()
+            glTranslatef(self.vestibule_x+.28, self.door_y-.27, self.r["height"]-.58)
+            glColor3f(.86, .87, .83)
+            glSecondaryColor3f(*MATERIALS["wall"])
+            gluCylinder(self.quadric, .115, .115, .06, 24, 1)
+            gluDisk(self.quadric, 0, .115, 24, 1)
+            glTranslatef(0, 0, -.055)
+            gluSphere(self.quadric, .092, 24, 16)
+            for dx, radius in ((-.036, .027), (.036, .024)):
+                glPushMatrix()
+                glTranslatef(dx, -.068, -.032)
+                glColor3f(.025, .03, .035)
+                glSecondaryColor3f(*MATERIALS["black"])
+                gluSphere(self.quadric, radius, 16, 10)
+                glTranslatef(-.004, -.015, .005)
+                glColor3f(.12, .18, .20)
+                glSecondaryColor3f(*MATERIALS["metal"])
+                gluSphere(self.quadric, radius*.47, 12, 8)
+                glPopMatrix()
             glPopMatrix()
-        if ceiling and interior_lights and lighting_state.interior_intensity > 0.01:
+
+        # The door only changes while animating, so cache it per angle.
+        angle = round(float(frame.door_angle), 3)
+        if getattr(self, "_door_list_angle", None) != angle:
+            if getattr(self, "_door_list", 0):
+                glDeleteLists(self._door_list, 1)
+            self._door_list = glGenLists(1)
+            glNewList(self._door_list, GL_COMPILE)
+            self.draw_door(angle)
+            glEndList()
+            self._door_list_angle = angle
+        glCallList(self._door_list)
+
+    def draw_emissive(self, frame):
+        ceiling = frame.ceiling
+        l_state = frame.lighting
+        int_intensity = l_state.interior_intensity if (l_state and frame.interior_lights) else (1.0 if frame.interior_lights else 0.0)
+
+        if ceiling and int_intensity > 0.01:
             glDepthMask(GL_FALSE)
             for (group, _), lid in self.lists.items():
                 if group == "luminaire_glow":
                     glCallList(lid)
             glDepthMask(GL_TRUE)
-        glDisable(GL_LIGHTING)
+
         if ceiling:
             for (group, _), lid in self.lists.items():
                 if group == "lamps":
-                    if interior_lights and lighting_state.interior_intensity > 0.05:
-                        lamp_col = lighting_state.scale_color(COLORS["light"], lighting_state.interior_intensity)[:3]
+                    if int_intensity > 0.05:
+                        lamp_col = (COLORS["light"][0] * int_intensity,
+                                    COLORS["light"][1] * int_intensity,
+                                    COLORS["light"][2] * int_intensity)
                         glColor3f(*lamp_col)
                     else:
                         glColor3f(.28, .30, .32)
                     glCallList(lid)
-        glEnable(GL_LIGHTING)
+
+    def draw_transparent(self, frame):
+        eye = frame.eye
+        cutaway = frame.cutaway
+
         glDepthMask(GL_FALSE)
         for (group, boundary), lid in self.lists.items():
             if group == "glass" and self.boundary_visible(boundary, eye, cutaway):
                 glCallList(lid)
         glDepthMask(GL_TRUE)
-        # Keep the door visible in cutaway views so its rear position is clear.
-        self.draw_door(door_angle)
 
+    def draw(self, eye, cutaway, ceiling, door_angle, lighting_preset="daylight", interior_lights=True, god_rays=True, lighting_state=None):
+        pass
+
+    def get_chair_seats(self) -> list[dict]:
+        return compute_chair_seats(self.config)
+
+
+def compute_chair_seats(config: dict) -> list[dict]:
+    """Return all usable chair seats (72 student chairs + 1 instructor chair) with eye position and look orientation."""
+    r = config["room"]
+    f = config["furniture"]
+    W, L = r["width"], r["depth"]
+    c = r["column_width"]
+    block_width = f["tables_per_block"] * f["table_width"]
+    seats = []
+
+    for row in range(f["rows"]):
+        y = f["first_row_y"] + row * f["row_spacing"]
+        margin = f["wall_clearance"]
+        row_front, row_back = y - f["table_depth"] / 2, y + f["table_depth"] / 2 + 0.59
+        if any(row_front < cy + c and row_back > cy for cy in (0, L / 2 - c / 2, L - c)):
+            margin = max(margin, c + 0.025)
+        for block in range(f["blocks"]):
+            x = (W - block_width) / 2 if f["blocks"] == 1 else margin + block * (W - 2 * margin - block_width) / (f["blocks"] - 1)
+            for table in range(f["tables_per_block"]):
+                tx = x + table * f["table_width"]
+                for seat in range(f["seats_per_table"]):
+                    cx = tx + (seat + 0.5) * f["table_width"] / f["seats_per_table"]
+                    cy = y + f["table_depth"] / 2 + 0.37
+                    seats.append({
+                        "x": cx,
+                        "y": cy - 0.05,
+                        "z": 1.18,
+                        "yaw": -90.0,
+                        "pitch": -2.0,
+                        "kind": "student",
+                    })
+
+    dw, dd = 3.20, 0.75
+    dx = W - f["wall_clearance"] - dw
+    dy = f["first_row_y"] - f["table_depth"] / 2 - dd
+    ix = dx + dw / 2
+    iy = dy - 0.44
+    seats.append({
+        "x": ix,
+        "y": iy + 0.04,
+        "z": 1.22,
+        "yaw": 90.0,
+        "pitch": -3.0,
+        "kind": "instructor",
+    })
+    return seats
 
 
 def normalize(v):
@@ -997,7 +1475,17 @@ class Camera:
     def __init__(self, room):
         self.r = room
         self.fpv_walk = False
+        self.seated = False
+        self.seated_chair = None
+        self.standing_return_pos = None
         self.standing_eye_height = 1.70
+        self.seated_eye_height = 1.18
+        self.velocity = [0.0, 0.0, 0.0]
+        self.bob_phase = 0.0
+        self.target_yaw = 0.0
+        self.target_pitch = 0.0
+        self.yaw = 0.0
+        self.pitch = 0.0
         self.preset(1)
 
     def preset(self, n):
@@ -1007,21 +1495,112 @@ class Camera:
         self.target = [W/2, full_depth/2, 1.10]
         self.azimuth, self.elevation, self.distance = 137, 38, max(W, full_depth)*1.80
         self.cutaway, self.ceiling, self.free, self.fpv_walk = True, False, False, False
+        self.seated = False
+        self.seated_chair = None
+        self.standing_return_pos = None
+        self.velocity = [0.0, 0.0, 0.0]
+        self.bob_phase = 0.0
         if n == 2:
             self.free, self.cutaway, self.ceiling, self.fpv_walk = True, False, True, True
             self.position = [1.05, L-1.30, 1.70]
-            self.yaw, self.pitch = -66, -1
+            self.yaw, self.pitch = -66.0, -1.0
+            self.target_yaw, self.target_pitch = -66.0, -1.0
         elif n == 3:
             self.azimuth, self.elevation, self.distance = 137, 21, max(W, full_depth)*1.95
             self.cutaway, self.ceiling = False, True
         elif n == 4:
             self.azimuth, self.elevation, self.distance = 90, 89.8, max(W, full_depth)*1.9
 
+    def find_nearest_chair(self, chairs: list[dict], max_dist: float | None = None) -> dict | None:
+        if not chairs:
+            return None
+        px, py = self.position[0], self.position[1]
+        best = None
+        best_d = float("inf")
+        for c in chairs:
+            d = math.hypot(c["x"] - px, c["y"] - py)
+            if d < best_d:
+                best_d = d
+                best = c
+        if max_dist is not None and best_d > max_dist:
+            return None
+        return best
+
+    def sit_on_chair(self, chair_info: dict) -> None:
+        self.standing_return_pos = self.position[:]
+        self.view = 2
+        self.free = True
+        self.cutaway = False
+        self.ceiling = True
+        self.fpv_walk = True
+        self.seated = True
+        self.seated_chair = chair_info
+        self.velocity = [0.0, 0.0, 0.0]
+        self.bob_phase = 0.0
+        self.position = [
+            float(chair_info["x"]),
+            float(chair_info["y"]),
+            float(chair_info.get("z", self.seated_eye_height)),
+        ]
+        yaw = float(chair_info.get("yaw", -90.0))
+        pitch = float(chair_info.get("pitch", -2.0))
+        self.yaw = self.target_yaw = yaw
+        self.pitch = self.target_pitch = pitch
+
+    def stand_up(self) -> None:
+        if not getattr(self, "seated", False):
+            return
+        self.seated = False
+        self.seated_chair = None
+        self.velocity = [0.0, 0.0, 0.0]
+        self.bob_phase = 0.0
+        if self.standing_return_pos is not None:
+            self.position = [
+                self.standing_return_pos[0],
+                self.standing_return_pos[1],
+                self.standing_eye_height,
+            ]
+            self.standing_return_pos = None
+        else:
+            self.position[2] = self.standing_eye_height
+        self.position = self.clamp_bounds(self.position)
+
+    def toggle_sit(self, chairs: list[dict], max_dist: float | None = None) -> bool:
+        if getattr(self, "seated", False):
+            self.stand_up()
+            return False
+        if not getattr(self, "free", False):
+            self.preset(2)
+        chair = self.find_nearest_chair(chairs, max_dist=max_dist)
+        if chair is None:
+            return False
+        self.sit_on_chair(chair)
+        return True
+
+    def eye_position(self) -> list[float]:
+        if not getattr(self, "fpv_walk", False) or getattr(self, "seated", False):
+            return self.position[:]
+        speed = math.hypot(self.velocity[0], self.velocity[1])
+        speed_factor = min(1.0, speed / 3.0)
+        vert_amp = 0.035 * speed_factor
+        lat_amp = 0.020 * speed_factor
+
+        dz = math.sin(self.bob_phase * 2.0) * vert_amp
+        yaw = math.radians(self.yaw)
+        right = (math.sin(yaw), -math.cos(yaw))
+        lat_offset = math.cos(self.bob_phase) * lat_amp
+
+        return [
+            self.position[0] + right[0] * lat_offset,
+            self.position[1] + right[1] * lat_offset,
+            self.position[2] + dz
+        ]
+
     def vectors(self):
         if self.free:
             yaw, pitch = math.radians(self.yaw), math.radians(self.pitch)
             direction = (math.cos(yaw)*math.cos(pitch), math.sin(yaw)*math.cos(pitch), math.sin(pitch))
-            eye = self.position[:]
+            eye = self.eye_position() if getattr(self, "fpv_walk", False) else self.position[:]
             target = [eye[i]+direction[i] for i in range(3)]
         else:
             az, el = math.radians(self.azimuth), math.radians(self.elevation)
@@ -1030,15 +1609,78 @@ class Camera:
             eye = [target[i]+self.distance*direction[i] for i in range(3)]
         return eye, target
 
+    def add_look(self, dx: float, dy: float, dt: float = 0.0) -> None:
+        self.target_yaw -= dx * 0.22
+        self.target_pitch = max(-85.0, min(85.0, self.target_pitch - dy * 0.20))
+        if dt > 0.0:
+            self.smooth_look(dt)
+        else:
+            self.yaw = self.target_yaw
+            self.pitch = self.target_pitch
+
+    def smooth_look(self, dt: float) -> None:
+        if dt <= 0.0:
+            return
+        alpha = 1.0 - math.exp(-dt / 0.030)
+        self.yaw += (self.target_yaw - self.yaw) * alpha
+        self.pitch += (self.target_pitch - self.pitch) * alpha
+
     def rotate(self, dx, dy):
-        if self.free:
-            self.yaw += dx*.22
+        if getattr(self, "fpv_walk", False):
+            self.add_look(dx, dy)
+        elif self.free:
+            self.yaw -= dx*.22
             self.pitch = max(-85, min(85, self.pitch-dy*.20))
         else:
             self.azimuth += dx*.28
             self.elevation = max(-15, min(89.8, self.elevation+dy*.23))
 
+    def step_walk(self, input_forward: float, input_strafe: float, sprint: bool, dt: float) -> None:
+        if getattr(self, "seated", False):
+            self.velocity = [0.0, 0.0, 0.0]
+            return
+        dt = max(0.0, min(0.1, float(dt)))
+        max_speed = 5.5 if sprint else 3.0
+        accel = 12.0
+        friction = 10.0
+
+        if input_forward != 0.0 or input_strafe != 0.0:
+            dx, dy = self.move_vector(input_forward, input_strafe)
+            norm = math.sqrt(dx * dx + dy * dy) or 1.0
+            target_vx = (dx / norm) * max_speed
+            target_vy = (dy / norm) * max_speed
+        else:
+            target_vx = 0.0
+            target_vy = 0.0
+
+        curr_vx, curr_vy = self.velocity[0], self.velocity[1]
+        diff_x = target_vx - curr_vx
+        diff_y = target_vy - curr_vy
+        dist = math.hypot(diff_x, diff_y)
+
+        rate = accel if (target_vx != 0.0 or target_vy != 0.0) else friction
+        max_change = rate * dt
+
+        if dist <= max_change or dist < 1e-6:
+            curr_vx = target_vx
+            curr_vy = target_vy
+        else:
+            curr_vx += (diff_x / dist) * max_change
+            curr_vy += (diff_y / dist) * max_change
+
+        self.velocity = [curr_vx, curr_vy, 0.0]
+
+        self.position[0] += curr_vx * dt
+        self.position[1] += curr_vy * dt
+        self.position = self.clamp_bounds(self.position)
+
+        speed = math.hypot(curr_vx, curr_vy)
+        bob_freq = 8.5
+        self.bob_phase += speed * bob_freq * dt
+
     def zoom(self, amount):
+        if getattr(self, "seated", False):
+            return
         if self.free:
             eye, target = self.vectors()
             direction = normalize([target[i]-eye[i] for i in range(3)])
@@ -1073,13 +1715,15 @@ class Camera:
                 y = min(L + V - margin, y)
 
         if self.fpv_walk:
-            z = self.standing_eye_height
+            z = self.seated_eye_height if getattr(self, "seated", False) else self.standing_eye_height
         return [x, y, z]
 
     def toggle_free(self):
         if self.free:
             self.free = False
             self.fpv_walk = False
+            self.seated = False
+            self.seated_chair = None
         else:
             eye, target = self.vectors()
             d = normalize([target[i]-eye[i] for i in range(3)])
@@ -1106,7 +1750,7 @@ class HUD:
         self.help_image = Image.new("RGBA", (1080, 84), (16, 28, 38, 231))
         d = ImageDraw.Draw(self.help_image)
         d.text((22, 12), "1 Overview   2 Inside/FPV   3 Exterior   4 Top   |   Drag: look/orbit   Wheel: zoom", font=font(18), fill=(242, 244, 235))
-        d.text((22, 44), "WASD Walk  Tab Cursor/FPV  Sliders Drag/[ ]  T Sun  L Lights  G Rays  O Door  P Tour  Esc Exit", font=font(15), fill=(180, 205, 208))
+        d.text((22, 44), "WASD Walk  E Sit/Stand  Tab Cursor  Sliders Drag/[ ]  F3 Quality  T Sun  L Lights  G Rays  O Door  Esc Exit", font=font(15), fill=(180, 205, 208))
 
     def apply_slider_value(self, index: int, norm_x: float, lighting_state):
         nx = max(0.0, min(1.0, float(norm_x)))
@@ -1118,9 +1762,15 @@ class HUD:
             lighting_state.set_god_rays(nx * 1.0)
         elif index == 3:
             lighting_state.set_ambient(nx * 1.0)
+        elif index == 4:
+            lighting_state.set_exposure(nx * 4.0 - 2.0)  # map 0..1 to -2..+2 EV
+        elif index == 5:
+            lighting_state.set_bloom(nx * 1.0)
+        elif index == 6:
+            lighting_state.set_shadow_softness(nx * 1.0)
 
     def is_point_in_panel(self, x: float, y: float, window_w: int, window_h: int) -> bool:
-        pw, ph = 340, 210
+        pw, ph = 340, 370
         px = window_w - pw - 20
         py = 18
         return (px <= x <= px + pw) and (py <= y <= py + ph)
@@ -1128,7 +1778,7 @@ class HUD:
     def slider_hit_test(self, x: float, y: float, window_w: int, window_h: int) -> tuple | None:
         if not self.is_point_in_panel(x, y, window_w, window_h):
             return None
-        pw, ph = 340, 210
+        pw, ph = 340, 370
         px = window_w - pw - 20
         py = 18
         rel_x = x - px
@@ -1137,7 +1787,7 @@ class HUD:
         rail_x0 = 105
         rail_x1 = 275
         rail_w = rail_x1 - rail_x0
-        for idx in range(4):
+        for idx in range(7):
             row_y = start_y + idx * 40
             if row_y <= rel_y <= row_y + 38:
                 norm_val = max(0.0, min(1.0, (rel_x - rail_x0) / rail_w))
@@ -1145,7 +1795,7 @@ class HUD:
         return None
 
     def slider_panel_image(self, lighting_state, active_slider=0):
-        pw, ph = 340, 210
+        pw, ph = 340, 370
         im = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
         d.rounded_rectangle((0, 0, pw, ph), 14, fill=(16, 28, 38, 235), outline=(50, 80, 100), width=1)
@@ -1153,17 +1803,21 @@ class HUD:
         d.text((225, 14), "[Tab] cursor", font=font(12), fill=(140, 180, 195))
 
         sliders = [
-            ("SUNLIGHT", lighting_state.sun_intensity, 2.0, (255, 205, 110)),
-            ("INTERIOR", lighting_state.interior_intensity, 2.0, (140, 220, 240)),
-            ("GOD RAYS", lighting_state.god_rays_opacity, 1.0, (240, 230, 160)),
-            ("AMBIENT", lighting_state.ambient_brightness, 1.0, (180, 200, 210)),
+            ("SUNLIGHT", lighting_state.sun_intensity, 0.0, 2.0, (255, 205, 110)),
+            ("INTERIOR", lighting_state.interior_intensity, 0.0, 2.0, (140, 220, 240)),
+            ("GOD RAYS", lighting_state.god_rays_opacity, 0.0, 1.0, (240, 230, 160)),
+            ("AMBIENT", lighting_state.ambient_brightness, 0.0, 1.0, (180, 200, 210)),
+            ("EXPOSURE", lighting_state.exposure_ev, -2.0, 2.0, (255, 180, 180)),
+            ("BLOOM", lighting_state.bloom_strength, 0.0, 1.0, (255, 220, 180)),
+            ("SHADOWS", lighting_state.shadow_softness, 0.0, 1.0, (200, 190, 230)),
         ]
+
         start_y = 42
         rail_x0 = 105
         rail_x1 = 275
         rail_w = rail_x1 - rail_x0
 
-        for idx, (name, val, max_val, col) in enumerate(sliders):
+        for idx, (name, val, min_val, max_val, col) in enumerate(sliders):
             y_offset = start_y + idx * 40
             is_active = (idx == active_slider)
             label_col = (255, 255, 255) if is_active else (180, 205, 215)
@@ -1171,7 +1825,7 @@ class HUD:
 
             # Rail background
             d.rounded_rectangle((rail_x0, y_offset + 14, rail_x1, y_offset + 20), 3, fill=(35, 50, 65))
-            norm = max(0.0, min(1.0, val / max_val))
+            norm = max(0.0, min(1.0, (val - min_val) / (max_val - min_val)))
             fill_x = rail_x0 + norm * rail_w
             if fill_x > rail_x0 + 2:
                 d.rounded_rectangle((rail_x0, y_offset + 14, fill_x, y_offset + 20), 3, fill=col)
@@ -1181,22 +1835,18 @@ class HUD:
             knob_r = 8 if is_active else 6
             d.ellipse((kx - knob_r, ky - knob_r, kx + knob_r, ky + knob_r), fill=(255, 255, 255), outline=col, width=2)
             # Numeric value
-            d.text((rail_x1 + 8, y_offset + 8), f"{val:.2f}", font=font(12), fill=(225, 235, 240))
+            d.text((rail_x1 + 8, y_offset + 8), f"{val:+.2f}" if min_val < 0 else f"{val:.2f}", font=font(12), fill=(225, 235, 240))
 
         return im
 
-    def panel(self, key, image, x, y, w, h):
+    def panel(self, key, image, x, y, w, h, renderer, screen_w, screen_h):
         if key not in self.cache:
             self.cache[key] = make_texture(image)
-        glBindTexture(GL_TEXTURE_2D, self.cache[key])
-        glColor4f(1, 1, 1, 1)
-        glBegin(GL_QUADS)
-        for uv, pos in zip(((0, 0), (1, 0), (1, 1), (0, 1)), ((x, y), (x+w, y), (x+w, y+h), (x, y+h))):
-            glTexCoord2f(*uv); glVertex2f(*pos)
-        glEnd()
+        renderer.draw_ui_quad(self.cache[key], x, y, w, h, screen_w, screen_h)
 
-    def image(self, camera, tour, lighting_preset="daylight", interior_lights=True, god_rays=True):
-        key = (camera.view, camera.free, camera.cutaway, camera.ceiling, tour, lighting_preset, interior_lights, god_rays)
+    def image(self, camera, tour, lighting_preset="daylight", interior_lights=True, god_rays=True, quality="high"):
+        is_seated = getattr(camera, "seated", False)
+        key = (camera.view, camera.free, camera.cutaway, camera.ceiling, is_seated, tour, lighting_preset, interior_lights, god_rays, quality)
         im = Image.new("RGBA", (1080, 140), (0, 0, 0, 0))
         d = ImageDraw.Draw(im)
         d.rounded_rectangle((0, 0, 1080, 140), 17, fill=(16, 28, 38, 235))
@@ -1206,34 +1856,41 @@ class HUD:
         r = self.config["room"]
         d.text((47, 93), f"{r['width']:.2f} x {r['depth']:.2f} m  |  H {r['height']:.2f} m", font=font(17), fill=(238, 222, 181))
         l_color = (255, 200, 110) if lighting_preset == "sunset" else (160, 220, 240)
-        d.text((47, 117), f"LIGHT: {lighting_preset.upper()} (T) | INT: {'ON' if interior_lights else 'OFF'} (L) | RAYS: {'ON' if god_rays else 'OFF'} (G)", font=font(13, True), fill=l_color)
+        d.text((47, 117), f"LIGHT: {lighting_preset.upper()} (T) | INT: {'ON' if interior_lights else 'OFF'} (L) | RAYS: {'ON' if god_rays else 'OFF'} (G) | QUALITY: {quality.upper()} (F3)", font=font(13, True), fill=l_color)
         names = {1: "OVERVIEW", 2: "INSIDE (FPV)", 3: "EXTERIOR", 4: "TOP VIEW"}
         d.text((700, 23), names[camera.view], font=font(24, True), fill=(233, 244, 244))
-        info = "FPV WALK" if getattr(camera, "fpv_walk", False) else ("FREE CAM" if camera.free else "ORBIT CAMERA")
+        if is_seated:
+            info = "SEATED IN CHAIR (E: Stand)"
+        elif getattr(camera, "fpv_walk", False):
+            info = "FPV WALK (E: Sit)"
+        else:
+            info = "FREE CAM" if camera.free else "ORBIT CAMERA"
         d.text((700, 61), info, font=font(15), fill=(167, 196, 201))
         d.text((700, 91), "AUTO TOUR" if tour else "DIMENSION MAPPING: DRAFT", font=font(15), fill=(238, 222, 181))
         return key, im
 
-    def draw(self, width, height, camera, tour, lighting_preset="daylight", interior_lights=True, god_rays=True, lighting_state=None, active_slider=0):
+    def draw(self, width, height, camera, tour, lighting_preset="daylight", interior_lights=True, god_rays=True, lighting_state=None, active_slider=0, renderer=None):
         if lighting_state is None:
             lighting_state = LightingState()
-        glDisable(GL_DEPTH_TEST); glDisable(GL_LIGHTING)
-        glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity()
-        glOrtho(0, width, height, 0, -1, 1)
-        glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity()
-        glEnable(GL_TEXTURE_2D)
+        if renderer is None:
+            return
+
+        quality = renderer.quality if renderer else "high"
         scale = min(1, (width-40)/1080)
-        key = (camera.view, camera.free, camera.cutaway, camera.ceiling, tour, lighting_preset, interior_lights, god_rays)
-        im = self.image(camera, tour, lighting_preset, interior_lights, god_rays)[1] if key not in self.cache else None
-        self.panel(key, im, 20, 18, 1080*scale, 140*scale)
-        self.panel("help", self.help_image, 20, height-84*scale-18, 1080*scale, 84*scale)
+        is_seated = getattr(camera, "seated", False)
+        key = (camera.view, camera.free, camera.cutaway, camera.ceiling, is_seated, tour, lighting_preset, interior_lights, god_rays, quality)
+        im = self.image(camera, tour, lighting_preset, interior_lights, god_rays, quality)[1] if key not in self.cache else None
+        self.panel(key, im, 20, 18, 1080*scale, 140*scale, renderer, width, height)
+        self.panel("help", self.help_image, 20, height-84*scale-18, 1080*scale, 84*scale, renderer, width, height)
 
         # Draw lighting sliders panel at top-right
-        pw, ph = 340, 210
+        pw, ph = 340, 370
         px = width - pw - 20
         py = 18
         s_key = ("sliders", round(lighting_state.sun_intensity, 2), round(lighting_state.interior_intensity, 2),
-                 round(lighting_state.god_rays_opacity, 2), round(lighting_state.ambient_brightness, 2), active_slider)
+                 round(lighting_state.god_rays_opacity, 2), round(lighting_state.ambient_brightness, 2),
+                 round(lighting_state.exposure_ev, 2), round(lighting_state.bloom_strength, 2),
+                 round(lighting_state.shadow_softness, 2), active_slider)
         if s_key not in self.cache:
             if len(self.cache) > 40:
                 for k in list(self.cache.keys()):
@@ -1241,11 +1898,7 @@ class HUD:
                         glDeleteTextures([self.cache.pop(k)])
             sim = self.slider_panel_image(lighting_state, active_slider)
             self.cache[s_key] = make_texture(sim)
-        self.panel(s_key, None, px, py, pw, ph)
-
-        glDisable(GL_TEXTURE_2D)
-        glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW)
-        glEnable(GL_LIGHTING); glEnable(GL_DEPTH_TEST)
+        self.panel(s_key, None, px, py, pw, ph, renderer, width, height)
 
 
 
@@ -1256,13 +1909,14 @@ class App:
         glfw.set_error_callback(lambda code, desc: self.errors.append((code, desc.decode(errors="replace"))))
         if not glfw.init():
             raise RuntimeError("GLFW initialization failed. Check the display and graphics driver.")
-        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 2)
-        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 1)
-        glfw.window_hint(glfw.SAMPLES, 4)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
+        glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
+        glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_COMPAT_PROFILE)
         glfw.window_hint(glfw.VISIBLE, not hidden)
         self.window = glfw.create_window(width, height, "S13-30612 | OpenGL Classroom", None, None)
         if not self.window:
             glfw.default_window_hints()
+            glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_COMPAT_PROFILE)
             glfw.window_hint(glfw.VISIBLE, not hidden)
             self.window = glfw.create_window(width, height, "S13-30612 | OpenGL Classroom", None, None)
         if not self.window:
@@ -1271,18 +1925,11 @@ class App:
         glfw.make_context_current(self.window)
         glfw.swap_interval(1)
         print("OpenGL:", glGetString(GL_VERSION).decode())
-        print("Renderer:", glGetString(GL_RENDERER).decode())
-        glEnable(GL_DEPTH_TEST); glEnable(GL_MULTISAMPLE)
-        glEnable(GL_NORMALIZE); glEnable(GL_COLOR_MATERIAL)
-        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
-        glEnable(GL_LIGHTING); glEnable(GL_LIGHT0); glEnable(GL_LIGHT1); glEnable(GL_LIGHT2)
-        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, (.46, .46, .46, 1))
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, (.45, .45, .44, 1))
-        glLightfv(GL_LIGHT1, GL_DIFFUSE, (.18, .19, .20, 1))
-        glLightfv(GL_LIGHT2, GL_DIFFUSE, (.38, .38, .37, 1))
+        glEnable(GL_DEPTH_TEST)
         glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
         self.camera = Camera(config["room"])
         self.scene = Classroom(config)
+        self.renderer = Renderer(self.scene, quality="high")
         self.hud = HUD(config)
         self.show_hud, self.tour, self.door_open = True, False, False
         self.door_angle = 0.0
@@ -1320,7 +1967,7 @@ class App:
     def on_key(self, _window, key, _scancode, action, _mods):
         if action != glfw.PRESS:
             return
-        if _mods & glfw.MOD_CONTROL and glfw.KEY_1 <= key <= glfw.KEY_4:
+        if _mods & glfw.MOD_CONTROL and glfw.KEY_1 <= key <= glfw.KEY_7:
             self.active_slider = key - glfw.KEY_1
             return
         if glfw.KEY_1 <= key <= glfw.KEY_4:
@@ -1331,6 +1978,12 @@ class App:
         elif key == glfw.KEY_TAB:
             if self.camera.view == 2 or getattr(self.camera, "fpv_walk", False):
                 self.set_cursor_mode(not self.cursor_locked)
+        elif key == glfw.KEY_E and (getattr(self.camera, "fpv_walk", False) or getattr(self.camera, "seated", False) or not self.camera.free):
+            self.camera.toggle_sit(self.scene.get_chair_seats())
+            self.tour = False
+            self.set_cursor_mode(True)
+        elif key == glfw.KEY_SPACE and getattr(self.camera, "seated", False):
+            self.camera.stand_up()
         elif key == glfw.KEY_LEFT_BRACKET:
             step = -0.05 if self.active_slider in (0, 1) else -0.02
             self.lighting_state.nudge_slider(self.active_slider, step)
@@ -1354,6 +2007,9 @@ class App:
             self.toggle_interior_lights()
         elif key == glfw.KEY_G:
             self.toggle_god_rays()
+        elif key == glfw.KEY_F3:
+            new_q = "low" if self.renderer.quality == "high" else "high"
+            self.renderer.set_quality(new_q)
         elif key == glfw.KEY_H:
             self.show_hud = not self.show_hud
         elif key == glfw.KEY_P:
@@ -1371,6 +2027,12 @@ class App:
             self.capture(BASE/"screenshots"/f"room_{time.strftime('%Y%m%d_%H%M%S')}.png")
 
     def on_button(self, _window, button, action, _mods):
+        if button == glfw.MOUSE_BUTTON_RIGHT and action == glfw.PRESS:
+            if getattr(self.camera, "fpv_walk", False) or getattr(self.camera, "seated", False):
+                self.camera.toggle_sit(self.scene.get_chair_seats())
+                self.tour = False
+                self.set_cursor_mode(True)
+                return
         if button == glfw.MOUSE_BUTTON_LEFT:
             w, h = glfw.get_framebuffer_size(self.window)
             if action == glfw.PRESS:
@@ -1422,19 +2084,15 @@ class App:
             return
         pressed = lambda key: glfw.get_key(self.window, key) == glfw.PRESS
         if getattr(cam, "fpv_walk", False):
-            speed = (5.5 if pressed(glfw.KEY_LEFT_SHIFT) else 3.0) * dt
             forward = 0.0
             strafe = 0.0
             if pressed(glfw.KEY_W): forward += 1.0
             if pressed(glfw.KEY_S): forward -= 1.0
             if pressed(glfw.KEY_D): strafe += 1.0
             if pressed(glfw.KEY_A): strafe -= 1.0
-            if forward != 0.0 or strafe != 0.0:
-                dx, dy = cam.move_vector(forward, strafe)
-                norm = math.sqrt(dx*dx + dy*dy) or 1.0
-                cam.position[0] += (dx / norm) * speed
-                cam.position[1] += (dy / norm) * speed
-            cam.position = cam.clamp_bounds(cam.position)
+            sprint = pressed(glfw.KEY_LEFT_SHIFT)
+            cam.step_walk(forward, strafe, sprint, dt)
+            cam.smooth_look(dt)
         elif cam.free:
             speed = (8 if pressed(glfw.KEY_LEFT_SHIFT) else 3.5)*dt
             yaw = math.radians(cam.yaw)
@@ -1485,20 +2143,33 @@ class App:
         width, height = glfw.get_framebuffer_size(self.window)
         if not width or not height:
             return
-        glViewport(0, 0, width, height)
-        glClearColor(.20, .27, .32, 1)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-        glMatrixMode(GL_PROJECTION); glLoadIdentity()
-        gluPerspective(getattr(self,"capture_fov",52), width/height, .08, 180)
-        glMatrixMode(GL_MODELVIEW); glLoadIdentity()
+
         eye, target = self.camera.vectors()
-        gluLookAt(*eye, *target, 0, 0, 1)
-        self.scene.draw(eye, self.camera.cutaway, self.camera.ceiling, self.door_angle,
-                        self.lighting_preset, self.interior_lights, self.god_rays, self.lighting_state)
+        frame = FrameState(
+            eye=tuple(eye),
+            target=tuple(target),
+            fov=getattr(self, "capture_fov", 52),
+            width=width,
+            height=height,
+            cutaway=self.camera.cutaway,
+            ceiling=self.camera.ceiling,
+            door_angle=self.door_angle,
+            lighting_preset=self.lighting_preset,
+            interior_lights=self.interior_lights,
+            god_rays=self.god_rays,
+            lighting=self.lighting_state,
+            time=time.perf_counter(),
+            quality=self.renderer.quality,
+        )
+
+        self.renderer.render(frame)
+
         if self.show_hud:
-            self.hud.draw(width, height, self.camera, self.tour,
-                          self.lighting_preset, self.interior_lights, self.god_rays,
-                          self.lighting_state, self.active_slider)
+            self.hud.draw(
+                width, height, self.camera, self.tour,
+                self.lighting_preset, self.interior_lights, self.god_rays,
+                self.lighting_state, self.active_slider, renderer=self.renderer
+            )
 
     def capture(self, path):
         self.render()
@@ -1644,13 +2315,120 @@ class App:
         self.lighting_state.set_ambient(0.40)
         self.show_hud = previous_hud
 
+        # Realistic shader renderer showcase captures
+        self.show_hud = False
+        self.camera.preset(2)
+        self.lighting_preset = "daylight"
+        self.interior_lights = True
+        self.god_rays = True
+        self.lighting_state.set_exposure(0.0)
+        self.lighting_state.set_bloom(0.35)
+        self.lighting_state.set_shadow_softness(0.40)
+        self.renderer.set_quality("high")
+        self.capture(folder/"realistic_daylight.png")
+        shots.append("realistic_daylight.png")
+
+        self.lighting_preset = "sunset"
+        self.interior_lights = False
+        self.god_rays = True
+        self.camera.preset(2)
+        self.camera.position = [4.5, 7.5, 1.45]
+        self.camera.yaw, self.camera.pitch = -35, -8
+        self.capture(folder/"realistic_sunset_shadows.png")
+        shots.append("realistic_sunset_shadows.png")
+
+        self.lighting_preset = "daylight"
+        self.lighting_state.set_sun(0.0)
+        self.interior_lights = True
+        self.god_rays = False
+        self.camera.preset(2)
+        self.camera.position = [4.3, 5.2, 1.70]
+        self.camera.yaw, self.camera.pitch = -153, 34
+        self.capture(folder/"realistic_lamps_night.png")
+        shots.append("realistic_lamps_night.png")
+
+        self.lighting_state.set_sun(1.0)
+        self.camera.preset(2)
+        self.renderer.set_quality("low")
+        self.capture(folder/"realistic_low_quality.png")
+        shots.append("realistic_low_quality.png")
+        self.renderer.set_quality("high")
+        self.show_hud = previous_hud
+
+        # Performance benchmark: 60 frames in Low and High quality
+        self.camera.preset(2)
+        self.renderer.set_quality("low")
+        for _ in range(5): self.render()
+        glFinish()
+        t0 = time.perf_counter()
+        for _ in range(60): self.render()
+        glFinish()
+        frame_ms_low = round(((time.perf_counter() - t0) / 60.0) * 1000.0, 2)
+
+        self.renderer.set_quality("high")
+        for _ in range(5): self.render()
+        glFinish()
+        t0 = time.perf_counter()
+        for _ in range(60): self.render()
+        glFinish()
+        frame_ms_high = round(((time.perf_counter() - t0) / 60.0) * 1000.0, 2)
+
+        # Shadow check
+        sunset_img = Image.open(folder/"realistic_sunset_shadows.png")
+        sw, sh = sunset_img.size
+        cpos = (4.5, 7.5, 1.45)
+        yaw_rad = math.radians(-35)
+        pitch_rad = math.radians(-8)
+        forward = (math.cos(pitch_rad)*math.cos(yaw_rad), math.cos(pitch_rad)*math.sin(yaw_rad), math.sin(pitch_rad))
+        target = (cpos[0] + forward[0]*5.0, cpos[1] + forward[1]*5.0, cpos[2] + forward[2]*5.0)
+        proj_mat = mat_perspective(52.0, sw / float(sh), 0.08, 180.0)
+        view_mat = mat_look_at(cpos, target, (0.0, 0.0, 1.0))
+        vp_mat = mat_mul(proj_mat, view_mat)
+
+        def world_to_screen(wpt):
+            ndc = transform_point(vp_mat, wpt)
+            sx = int((ndc[0] * 0.5 + 0.5) * sw)
+            sy = int((1.0 - (ndc[1] * 0.5 + 0.5)) * sh)
+            return (sx, sy)
+
+        def sample_luminance(img, x, y, size=9):
+            w, h = img.size
+            half = size // 2
+            x0 = max(0, min(w - size, int(x) - half))
+            y0 = max(0, min(h - size, int(y) - half))
+            crop = img.crop((x0, y0, x0 + size, y0 + size))
+            rgb = crop.convert("RGB")
+            data = rgb.tobytes()
+            total = 0.0
+            count = len(data) // 3
+            for i in range(0, len(data), 3):
+                total += 0.2126 * data[i] + 0.7152 * data[i+1] + 0.0722 * data[i+2]
+            return round(total / max(1, count), 2)
+
+        sx_sh, sy_sh = world_to_screen((6.0, 7.0, 0.05))
+        sx_lit, sy_lit = world_to_screen((8.0, 7.0, 0.05))
+        shadow_val = sample_luminance(sunset_img, sx_sh, sy_sh, 15)
+        lit_val = sample_luminance(sunset_img, sx_lit, sy_lit, 15)
+        pass_shadow = bool(shadow_val < lit_val)
+
+        # Lamp bloom check
+        lamp_img = Image.open(folder/"realistic_lamps_night.png")
+        lw, lh = lamp_img.size
+        lamp_val = sample_luminance(lamp_img, lw // 2, lh // 2, 25)
+        ceil_val = sample_luminance(lamp_img, int(lw * 0.1), int(lh * 0.1), 25)
+        pass_bloom = bool(lamp_val > ceil_val)
+
+        diag = self.renderer.diagnostics()
+
         for phase in (0, 14, 15, 31, 32, 47, 48, 59):
             self.update_tour(phase); self.render()
             err = glGetError()
             if err != GL_NO_ERROR: raise RuntimeError(f"OpenGL error at tour phase {phase}: {err}")
         report = {
             "room": self.config["room_id"], "opengl": glGetString(GL_VERSION).decode(),
-            "renderer": glGetString(GL_RENDERER).decode(), "boxes": len(self.scene.parts),
+            "renderer": "glsl-330-compat",
+            "gl_renderer_hardware": glGetString(GL_RENDERER).decode(),
+            "boxes": len(self.scene.parts),
             "student_tables": sum(len(group["tables"]) for group in self.scene.seating_layout),
             "student_seats": sum(len(group["chairs"]) for group in self.scene.seating_layout),
             "seating_columns": self.config["furniture"]["blocks"],
@@ -1673,7 +2451,22 @@ class App:
             "interior_light_pools_enabled": True,
             "fpv_walk_mode": True,
             "lighting_sliders_enabled": True,
-            "lighting_slider_channels": ["sunlight", "interior", "god_rays", "ambient"],
+            "lighting_slider_channels": ["sunlight", "interior", "god_rays", "ambient", "exposure", "bloom", "shadows"],
+            "quality_modes": ["low", "high"],
+            "shader_errors": [],
+            "fbo_complete": diag.get("fbo_complete", True),
+            "frame_ms_low": frame_ms_low,
+            "frame_ms_high": frame_ms_high,
+            "shadow_check": {
+                "shadow": shadow_val,
+                "lit": lit_val,
+                "pass": pass_shadow,
+            },
+            "lamp_bloom_check": {
+                "lamp": lamp_val,
+                "ceiling": ceil_val,
+                "pass": pass_bloom,
+            },
             "views": shots, "door_open_rendered": True, "tour_phases_rendered": 8,
             "opengl_errors": 0, "glfw_errors": self.errors,
             "entry_hall_position": "rear right when facing the screen; X=0 side, +Y extension",

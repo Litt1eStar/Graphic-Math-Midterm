@@ -4,13 +4,14 @@
 - **Project**: S13-30612 — Python + OpenGL Interactive Classroom Digital Twin (Version 14).
 - **Academic Context**: Midterm assignment "Room in 6th floor modeling" (Computer Graphics).
 - **Core Directive**: 100% of the 3D geometry and surface textures must be synthesized procedurally in Python code. **Do not use external 3D model files (`.obj`, `.gltf`, `.fbx`) or external image files for textures**.
-- **Delivery Target**: Standalone executable (`S13-30612.exe`), clean source scripts (`classroom.py`, `surface_materials.py`), JSON config (`room_config.json`), and comprehensive documentation (`README_TH.md`, `PRESENTATION_TH.md`).
+- **Delivery Target**: Standalone executable (`S13-30612.exe`), clean source scripts (`classroom.py`, `surface_materials.py`, `realistic_renderer.py`), JSON config (`room_config.json`), and comprehensive documentation (`README_TH.md`, `PRESENTATION_TH.md`).
 
 ---
 
 ## 2. File Responsibilities & Architecture
-- **[classroom.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/classroom.py)**: Main engine. Houses OpenGL fixed-function rendering, camera subsystem (orbit & freecam walk), HUD overlay, input callbacks, display lists compilation, and headless verification.
-- **[surface_materials.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/surface_materials.py)**: Procedural texture generator. Uses PIL to generate wood grain, terrazzo aggregate, and daylight backdrop. **Must always accompany `classroom.py`**.
+- **[classroom.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/classroom.py)**: Main engine. Houses scene geometry, display lists compilation, camera subsystem (orbit & FPV physical walk with bob/acceleration/smoothing), 7-channel HUD sliders, input callbacks, and headless verification.
+- **[surface_materials.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/surface_materials.py)**: Procedural texture generator. Uses PIL to generate wood grain, terrazzo aggregate, plaster wall, and daylight/sunset backdrops. **Must always accompany `classroom.py`**.
+- **[realistic_renderer.py](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/realistic_renderer.py)**: Full GLSL 3.3 shader pipeline (Option B). Houses per-pixel Cook-Torrance GGX/Lambert PBR, PCF sun shadow mapping, HDR RGBA16F FBO, 5-level bloom, ACES tonemapping, FXAA 3.11, SSAO, volumetric god rays, and drifting dust particle system. All shaders embedded as pure Python string constants (no external `.glsl` files). **Must always accompany `classroom.py`**.
 - **[room_config.json](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/room_config.json)**: External configuration file defining dimensions for the room, vestibule, columns, and seating layout.
 - **[data/](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/data/)**: Ground-truth architectural plans (`floor6_plan.pdf`), tape/laser measurement photos (`measurement_01..06.jpg`), reference photos, and revision history manifest (`sources.json`).
 - **[previews/](file:///c:/Users/krittin%20pragopdee/Downloads/New%20folder%20%2823%29/S13-30612_OpenGL/previews/)**: Automated render verification captures and JSON status reports (`verification.json`, `controls_verification.json`).
@@ -45,13 +46,14 @@
 ---
 
 ## 4. Engineering Standards & Workflows
-- **Display List Compilation**: All static geometry must be compiled into display lists (`glGenLists`, `glNewList`, `glCallList`) grouped by material and boundary.
-- **Outward Normals**: All custom polygon faces and cuboids must supply normalized outward normals (`glNormal3f`) for proper lighting and shading.
-- **Alpha Blending**: Transparent surfaces (glass doors, window glazing, contact shadows) must be drawn with `glDepthMask(GL_FALSE)` and `glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)`.
+- **Display List Compilation**: All static geometry must be compiled into display lists (`glGenLists`, `glNewList`, `glCallList`) grouped by material and boundary, emitting secondary color material attributes.
+- **Outward Normals**: All custom polygon faces and cuboids must supply normalized outward normals (`glNormal3f`) for Cook-Torrance GGX/Lambert PBR lighting and shadow map projection.
+- **Alpha Blending**: Transparent surfaces (glass doors, window glazing, contact shadows, god rays, dust) must be drawn with `glDepthMask(GL_FALSE)` and appropriate blending modes (`GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA` or additive `GL_SRC_ALPHA, GL_ONE`).
 - **Validation**:
-  - Compile check: `python -m py_compile classroom.py surface_materials.py`
+  - Compile check: `python -m py_compile classroom.py surface_materials.py realistic_renderer.py`
   - Automated render test: `python classroom.py --hidden --verify previews`
-  - Check `verification.json` and `controls_verification.json` for zero OpenGL errors.
+  - Unit tests: `python -m unittest discover -s tests -p "test_*.py"`
+  - Check `verification.json` for `opengl_errors == 0`, `shader_errors == []`, `fbo_complete == true`, and shadow/bloom validation passes.
 
 ---
 

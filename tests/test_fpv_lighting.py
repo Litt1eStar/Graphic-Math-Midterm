@@ -39,6 +39,40 @@ class TestFPVWalkCamera(unittest.TestCase):
         self.assertAlmostEqual(clamped[0], 8.0, places=2)
         self.assertAlmostEqual(clamped[1], 12.10 - 0.45, places=2)
 
+    def test_accelerates_then_caps(self):
+        import math
+        cam = Camera(self.room)
+        cam.preset(2)
+        cam.position = [5.0, 6.0, 1.70]
+        cam.yaw = 0
+        cam.step_walk(1, 0, False, 1 / 60)
+        self.assertLess(math.hypot(*cam.velocity[:2]), 3.0)
+        for _ in range(120):
+            cam.step_walk(1, 0, False, 1 / 60)
+        self.assertAlmostEqual(math.hypot(*cam.velocity[:2]), 3.0, places=1)
+
+    def test_decelerates_to_stop(self):
+        import math
+        cam = Camera(self.room)
+        cam.preset(2)
+        cam.position = [5.0, 6.0, 1.70]
+        cam.yaw = 0
+        for _ in range(120):
+            cam.step_walk(1, 0, False, 1 / 60)
+        for _ in range(60):
+            cam.step_walk(0, 0, False, 1 / 60)
+        self.assertLess(math.hypot(*cam.velocity[:2]), 0.05)
+
+    def test_bob_bounded_and_collision_unbobbed(self):
+        cam = Camera(self.room)
+        cam.preset(2)
+        cam.position = [5.0, 6.0, 1.70]
+        cam.yaw = 0
+        for _ in range(300):
+            cam.step_walk(1, 0, True, 1 / 60)
+            self.assertAlmostEqual(cam.position[2], 1.70, places=5)
+            self.assertLessEqual(abs(cam.eye_position()[2] - 1.70), 0.036)
+
 class TestLightingState(unittest.TestCase):
     def test_default_values_and_clamping(self):
         from classroom import LightingState
@@ -107,6 +141,49 @@ class TestAppInputRouting(unittest.TestCase):
         active = (active + 1) % 4
         self.assertEqual(active, 0)
 
+    def test_sit_on_chair_locks_movement_and_allows_mouse_rotation(self):
+        from pathlib import Path
+        from classroom import Camera, load_config, compute_chair_seats
+        config = load_config(Path("room_config.json"))
+        seats = compute_chair_seats(config)
+        self.assertEqual(len(seats), 73)  # 72 student chairs + 1 instructor chair
+
+        cam = Camera(config["room"])
+        cam.preset(2)
+        target_seat = seats[0]
+        cam.position = [target_seat["x"] + 0.3, target_seat["y"] + 0.3, 1.70]
+
+        sat = cam.toggle_sit(seats)
+        self.assertTrue(sat)
+        self.assertTrue(cam.seated)
+        self.assertAlmostEqual(cam.position[0], target_seat["x"], places=3)
+        self.assertAlmostEqual(cam.position[1], target_seat["y"], places=3)
+        self.assertAlmostEqual(cam.position[2], target_seat["z"], places=3)
+
+        # While seated, WASD walk input must not move the player
+        cam.step_walk(1.0, 1.0, True, 0.05)
+        self.assertAlmostEqual(cam.position[0], target_seat["x"], places=3)
+        self.assertAlmostEqual(cam.position[1], target_seat["y"], places=3)
+        self.assertEqual(cam.velocity, [0.0, 0.0, 0.0])
+        self.assertEqual(cam.eye_position(), cam.position)
+
+        # While seated, mouse rotation must still rotate camera yaw and pitch
+        initial_yaw = cam.yaw
+        initial_pitch = cam.pitch
+        cam.rotate(20.0, -15.0)
+        self.assertNotAlmostEqual(cam.yaw, initial_yaw)
+        self.assertNotAlmostEqual(cam.pitch, initial_pitch)
+
+        # Standing up restores standing eye height and unlocks movement
+        sat_after = cam.toggle_sit(seats)
+        self.assertFalse(sat_after)
+        self.assertFalse(cam.seated)
+        self.assertAlmostEqual(cam.position[2], 1.70, places=2)
+        cam.step_walk(1.0, 0.0, False, 0.05)
+        self.assertGreater(abs(cam.velocity[0]) + abs(cam.velocity[1]), 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
